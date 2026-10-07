@@ -16,6 +16,7 @@
     "cms:app:dev": "node ./scripts/run-tauri.mjs dev",
     "test": "node ./scripts/verify-cms-playwright.mjs",
     "test:standalone": "node ./scripts/test-cms-standalone.mjs",
+    "test:phase2": "node ./scripts/verify-phase2-editor.mjs",
     "test:splash": "node ./scripts/verify-splash.mjs"
   },
   "dependencies": {

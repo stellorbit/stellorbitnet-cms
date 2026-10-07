@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 
-const TEST_PORT = 8329;
+const TEST_PORT = Number(process.env.CMS_PORT) || 8322;
 
 function get(url) {
   return new Promise((resolve, reject) => {
