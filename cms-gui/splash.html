@@ -1,0 +1,626 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>stellorbit.net CMS - 起動中</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        /* 目に優しい落ち着いた暖色系ライトテーマ (AIネオンカラー完全排除) */
+        --bg-base: #f7f5f0;
+        --bg-card: #ffffff;
+        --border-subtle: #eae5dc;
+        --border-strong: #dcd5ca;
+        --text-main: #2b2826;
+        --text-muted: #736c66;
+        --text-light: #9c958e;
+        --primary: #2d587b;
+        --primary-subtle: #e8f0f6;
+        --accent: #a35d28;
+        --success: #1f7a4d;
+        --success-subtle: #e9f5ee;
+        --danger: #b33939;
+        --danger-subtle: #fbeeed;
+        --radius-sm: 6px;
+        --radius-md: 10px;
+        --radius-lg: 14px;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      body {
+        font-family:
+          'BIZ UDPGothic',
+          'Noto Sans JP',
+          'UD デジタル 教科書体',
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        background: var(--bg-base);
+        color: var(--text-main);
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+        padding: 1.75rem 2rem;
+        box-shadow: 0 12px 36px rgba(45, 40, 35, 0.08);
+        cursor: default;
+      }
+
+      /* ドラッグ可能ヘッダー */
+      .drag-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.25rem;
+      }
+
+      .brand-group {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+      }
+
+      .brand-icon {
+        font-size: 1.75rem;
+        line-height: 1;
+        display: inline-block;
+        filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.06));
+      }
+
+      .brand-title {
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: var(--text-main);
+        letter-spacing: -0.01em;
+      }
+
+      .brand-title span {
+        color: var(--primary);
+      }
+
+      .badge-cms {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: var(--primary);
+        background-color: var(--primary-subtle);
+        border: 1px solid rgba(45, 88, 123, 0.2);
+        padding: 0.15rem 0.5rem;
+        border-radius: 9999px;
+      }
+
+      .window-close-btn {
+        background: none;
+        border: none;
+        color: var(--text-light);
+        cursor: pointer;
+        font-size: 1.1rem;
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: var(--radius-sm);
+        transition: all 0.15s ease;
+      }
+      .window-close-btn:hover {
+        background: var(--danger-subtle);
+        color: var(--danger);
+      }
+
+      /* メイン進捗コンテンツ */
+      .main-content {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+        padding: 1.25rem;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+
+      .status-lead {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 0.6rem;
+      }
+
+      .current-phase {
+        font-size: 0.88rem;
+        font-weight: 700;
+        color: var(--text-main);
+      }
+
+      .percentage-text {
+        font-size: 0.85rem;
+        font-weight: 700;
+        font-family: 'BIZ UDPGothic', monospace;
+        color: var(--primary);
+      }
+
+      /* プログレスバー */
+      .progress-track {
+        width: 100%;
+        height: 8px;
+        background: #eeeae3;
+        border-radius: 9999px;
+        overflow: hidden;
+        margin-bottom: 1.25rem;
+      }
+
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #2d587b, #3d729e);
+        border-radius: 9999px;
+        transition: width 0.35s ease-out;
+      }
+
+      /* ステップ一覧 */
+      .step-list {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+      }
+
+      .step-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 0.825rem;
+        color: var(--text-muted);
+        padding: 0.35rem 0.5rem;
+        border-radius: var(--radius-sm);
+        transition: all 0.2s ease;
+      }
+
+      .step-item.active {
+        background-color: var(--primary-subtle);
+        color: var(--primary);
+        font-weight: 700;
+      }
+
+      .step-item.completed {
+        color: var(--text-main);
+      }
+
+      .step-label {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+      }
+
+      .step-indicator {
+        width: 18px;
+        height: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+      }
+
+      .spinner {
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(45, 88, 123, 0.25);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .step-badge {
+        font-size: 0.72rem;
+        padding: 0.1rem 0.45rem;
+        border-radius: 4px;
+        background: #eae6de;
+        color: var(--text-muted);
+      }
+
+      .step-item.active .step-badge {
+        background: rgba(45, 88, 123, 0.15);
+        color: var(--primary);
+      }
+
+      .step-item.completed .step-badge {
+        background: var(--success-subtle);
+        color: var(--success);
+      }
+
+      .step-item.error .step-badge {
+        background: var(--danger-subtle);
+        color: var(--danger);
+      }
+
+      /* フッター */
+      .footer-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 0.9rem;
+        font-size: 0.75rem;
+        color: var(--text-light);
+      }
+
+      .footer-actions {
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      .btn-text {
+        background: none;
+        border: none;
+        font-family: inherit;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        cursor: pointer;
+        text-decoration: underline;
+        padding: 0.2rem 0.4rem;
+      }
+      .btn-text:hover {
+        color: var(--primary);
+      }
+
+      /* エラーバナー */
+      .error-box {
+        display: none;
+        background: var(--danger-subtle);
+        border: 1px solid rgba(179, 57, 57, 0.3);
+        border-radius: var(--radius-sm);
+        padding: 0.6rem 0.8rem;
+        font-size: 0.78rem;
+        color: var(--danger);
+        margin-top: 0.5rem;
+      }
+      .error-box.show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ドラッグ対応ヘッダー -->
+    <div class="drag-header" data-tauri-drag-region>
+      <div class="brand-group" data-tauri-drag-region>
+        <span class="brand-icon">📖</span>
+        <div data-tauri-drag-region>
+          <span class="brand-title">stellorbit<span>.net</span></span>
+        </div>
+        <span class="badge-cms">CMS GUI</span>
+      </div>
+      <button id="closeBtn" class="window-close-btn" title="キャンセルして終了">
+        ✕
+      </button>
+    </div>
+
+    <!-- 進捗カード -->
+    <div class="main-content">
+      <div>
+        <div class="status-lead">
+          <span id="phaseText" class="current-phase">起動準備中...</span>
+          <span id="percentText" class="percentage-text">0%</span>
+        </div>
+        <div class="progress-track">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+
+        <ul class="step-list">
+          <li id="stepCms" class="step-item active">
+            <div class="step-label">
+              <span class="step-indicator"><div class="spinner"></div></span>
+              <span>CMS バックエンドサーバー</span>
+            </div>
+            <span class="step-badge">起動中</span>
+          </li>
+          <li id="stepAstro" class="step-item">
+            <div class="step-label">
+              <span class="step-indicator">⏳</span>
+              <span>Astro 開発サーバー (ポート4321)</span>
+            </div>
+            <span class="step-badge">待機中</span>
+          </li>
+          <li id="stepReady" class="step-item">
+            <div class="step-label">
+              <span class="step-indicator">⏳</span>
+              <span>記事データ・エディタUI準備</span>
+            </div>
+            <span class="step-badge">待機中</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- エラー表示エリア（万が一のポート競合等用） -->
+      <div id="errorBox" class="error-box">
+        <div id="errorMessage">サーバーの起動中に問題が発生しました。</div>
+        <div style="margin-top: 0.4rem; display: flex; gap: 0.5rem">
+          <button
+            id="retryBtn"
+            class="btn-text"
+            style="font-weight: 700; color: var(--danger)"
+          >
+            再試行する
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- フッター -->
+    <div class="footer-bar" data-tauri-drag-region>
+      <span>stellorbit.net Content Studio</span>
+      <div class="footer-actions">
+        <span id="versionText">v0.1.0</span>
+      </div>
+    </div>
+
+    <script>
+      const CMS_ORIGIN = 'http://127.0.0.1:8322';
+      const ASTRO_PORT = 4321;
+
+      const phaseText = document.getElementById('phaseText');
+      const percentText = document.getElementById('percentText');
+      const progressFill = document.getElementById('progressFill');
+
+      const stepCms = document.getElementById('stepCms');
+      const stepAstro = document.getElementById('stepAstro');
+      const stepReady = document.getElementById('stepReady');
+
+      const errorBox = document.getElementById('errorBox');
+      const errorMessage = document.getElementById('errorMessage');
+      const retryBtn = document.getElementById('retryBtn');
+      const closeBtn = document.getElementById('closeBtn');
+
+      // Tauri API チェック
+      function getTauriInvoke() {
+        if (window.__TAURI__?.core?.invoke) {
+          return window.__TAURI__.core.invoke;
+        }
+        if (window.__TAURI_INTERNALS__?.invoke) {
+          return window.__TAURI_INTERNALS__.invoke;
+        }
+        return null;
+      }
+
+      async function invokeTauri(cmd, args = {}) {
+        const invoke = getTauriInvoke();
+        if (invoke) {
+          return await invoke(cmd, args);
+        }
+        return null;
+      }
+
+      function setProgress(percent, text) {
+        progressFill.style.width = `${percent}%`;
+        percentText.textContent = `${Math.round(percent)}%`;
+        if (text) phaseText.textContent = text;
+      }
+
+      function setStepState(element, state, badgeText) {
+        element.className = `step-item ${state}`;
+        const indicator = element.querySelector('.step-indicator');
+        const badge = element.querySelector('.step-badge');
+        if (badgeText) badge.textContent = badgeText;
+
+        if (state === 'active') {
+          indicator.innerHTML = '<div class="spinner"></div>';
+          if (!badgeText) badge.textContent = '処理中';
+        } else if (state === 'completed') {
+          indicator.innerHTML =
+            '<span style="color: var(--success); font-weight: bold;">✓</span>';
+          if (!badgeText) badge.textContent = '完了';
+        } else if (state === 'error') {
+          indicator.innerHTML =
+            '<span style="color: var(--danger); font-weight: bold;">⚠️</span>';
+          if (!badgeText) badge.textContent = 'エラー';
+        } else {
+          indicator.innerHTML = '⏳';
+          if (!badgeText) badge.textContent = '待機中';
+        }
+      }
+
+      async function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+      }
+
+      // 閉じるボタン
+      closeBtn.addEventListener('click', async () => {
+        try {
+          const invoke = getTauriInvoke();
+          if (invoke) {
+            await invoke('close_application');
+          } else {
+            window.close();
+          }
+        } catch {
+          window.close();
+        }
+      });
+
+      retryBtn.addEventListener('click', () => {
+        errorBox.classList.remove('show');
+        startStartupSequence();
+      });
+
+      async function pingCms() {
+        try {
+          const res = await fetch(`${CMS_ORIGIN}/api/health`, {
+            method: 'GET',
+            cache: 'no-cache',
+          });
+          if (res.ok) {
+            return await res.json();
+          }
+        } catch (err) {
+          // まだ接続できない
+        }
+        return null;
+      }
+
+      async function startStartupSequence() {
+        try {
+          errorBox.classList.remove('show');
+          setProgress(15, 'CMS バックエンドサーバーの確認中...');
+          setStepState(stepCms, 'active', '接続確認中');
+          setStepState(stepAstro, 'pending', '待機中');
+          setStepState(stepReady, 'pending', '待機中');
+
+          const invoke = getTauriInvoke();
+          let cmsReady = false;
+          let astroReady = false;
+
+          if (invoke) {
+            // Tauri ネイティブ環境: Rust コマンドで安全かつ即時に死活確認
+            for (let i = 0; i < 60; i++) {
+              try {
+                const health = await invoke('check_cms_health');
+                if (health && health.cms_running) {
+                  cmsReady = true;
+                  astroReady = health.astro_running;
+                  break;
+                }
+              } catch (e) {
+                console.warn('check_cms_health invoke error:', e);
+              }
+              await sleep(350);
+            }
+          } else {
+            // ブラウザ環境フォールバック
+            for (let i = 0; i < 50; i++) {
+              const cmsInfo = await pingCms();
+              if (cmsInfo) {
+                cmsReady = true;
+                astroReady = cmsInfo.astroRunning;
+                break;
+              }
+              await sleep(400);
+            }
+          }
+
+          if (!cmsReady) {
+            throw new Error(
+              'CMS サーバー (ポート 8322) への接続にタイムアウトしました。cms-gui.log をご確認ください。'
+            );
+          }
+
+          setStepState(stepCms, 'completed', '稼働中');
+          setProgress(45, 'Astro 開発サーバーの状態を確認中...');
+          await sleep(250);
+
+          // Step 2: Astro 開発サーバー起動
+          setStepState(stepAstro, 'active', '起動確認中');
+
+          if (!astroReady) {
+            setProgress(60, 'Astro 開発サーバーを起動中 (ポート 4321)...');
+            try {
+              const startRes = await fetch(
+                `${CMS_ORIGIN}/api/dev-server/start`,
+                { method: 'POST' }
+              );
+              if (startRes.ok) {
+                const resData = await startRes.json();
+                astroReady = resData.success;
+              }
+            } catch (err) {
+              console.warn('Failed to trigger astro start via fetch:', err);
+            }
+          }
+
+          // Astroの起動を待機（最大10秒）
+          for (let i = 0; i < 20; i++) {
+            if (invoke) {
+              try {
+                const health = await invoke('check_cms_health');
+                if (health && health.astro_running) {
+                  astroReady = true;
+                  break;
+                }
+              } catch {}
+            } else {
+              try {
+                const stRes = await fetch(
+                  `${CMS_ORIGIN}/api/dev-server/status`
+                );
+                if (stRes.ok) {
+                  const st = await stRes.json();
+                  if (st.running) {
+                    astroReady = true;
+                    break;
+                  }
+                }
+              } catch {}
+            }
+            await sleep(400);
+          }
+
+          setStepState(
+            stepAstro,
+            'completed',
+            astroReady ? '準備完了' : 'バックグラウンド起動中'
+          );
+          setProgress(80, '記事データ・UIリソースを準備中...');
+          await sleep(250);
+
+          // Step 3: 記事データの読み込み確認
+          setStepState(stepReady, 'active', '読み込み中');
+          try {
+            const postsRes = await fetch(`${CMS_ORIGIN}/api/posts`);
+            if (postsRes.ok) {
+              const posts = await postsRes.json();
+              console.log(`Loaded ${posts.length} posts`);
+            }
+          } catch {
+            // エディタ起動自体は継続
+          }
+
+          setStepState(stepReady, 'completed', '準備完了');
+          setProgress(100, 'すべての準備が完了しました！');
+          await sleep(400);
+
+          // メインウィンドウへ遷移
+          if (invoke) {
+            await invoke('show_main_and_close_splash');
+          } else {
+            window.location.href = CMS_ORIGIN;
+          }
+        } catch (err) {
+          console.error('Startup failure:', err);
+          setStepState(stepCms, 'error', '失敗');
+          errorMessage.textContent = err.message || '初期化に失敗しました。';
+          errorBox.classList.add('show');
+          setProgress(20, '起動エラーが発生しました');
+        }
+      }
+
+      // 開始
+      window.addEventListener('DOMContentLoaded', () => {
+        startStartupSequence();
+      });
+    </script>
+  </body>
+</html>

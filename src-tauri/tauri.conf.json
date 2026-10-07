@@ -1,0 +1,54 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "stellorbit-cms",
+  "version": "0.1.0",
+  "identifier": "com.stellorbit.cms",
+  "build": {
+    "frontendDist": "../cms-gui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "splashscreen",
+        "title": "stellorbit.net CMS - 起動中",
+        "url": "splash.html",
+        "width": 520,
+        "height": 400,
+        "resizable": false,
+        "decorations": false,
+        "center": true,
+        "visible": true,
+        "shadow": true,
+        "alwaysOnTop": true
+      },
+      {
+        "label": "main",
+        "title": "📖 stellorbit.net 記事管理CMS",
+        "url": "splash.html",
+        "width": 1360,
+        "height": 900,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "decorations": true,
+        "center": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}
