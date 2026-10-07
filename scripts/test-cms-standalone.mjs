@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 
+const TEST_PORT = 8329;
+
 function get(url) {
   return new Promise((resolve, reject) => {
     http.get(url, (res) => {
@@ -18,19 +20,19 @@ function get(url) {
 }
 
 async function run() {
-  console.log('[Test] Starting dev-cms.mjs...');
+  console.log(`[Test] Starting dev-cms.mjs on port ${TEST_PORT}...`);
   const cmsProc = spawn('node', ['./scripts/dev-cms.mjs'], {
     cwd: process.cwd(),
-    stdio: 'inherit'
+    stdio: 'inherit',
+    env: { ...process.env, CMS_PORT: String(TEST_PORT) }
   });
 
   try {
-    // Wait for server to start
     let health = null;
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 20; i++) {
       await new Promise(r => setTimeout(r, 400));
       try {
-        health = await get('http://127.0.0.1:8322/api/health');
+        health = await get(`http://127.0.0.1:${TEST_PORT}/api/health`);
         if (health.status === 200) break;
       } catch {
         // Retry
@@ -38,11 +40,11 @@ async function run() {
     }
 
     if (!health || health.status !== 200) {
-      throw new Error('CMS failed to respond to /api/health');
+      throw new Error(`CMS failed to respond to /api/health on port ${TEST_PORT}`);
     }
     console.log('[Test] /api/health OK:', health.json);
 
-    const posts = await get('http://127.0.0.1:8322/api/posts');
+    const posts = await get(`http://127.0.0.1:${TEST_PORT}/api/posts`);
     if (posts.status !== 200 || !Array.isArray(posts.json)) {
       throw new Error('/api/posts failed or returned invalid data');
     }
@@ -51,16 +53,16 @@ async function run() {
       console.log(`[Test] First post: slug="${posts.json[0].slug}", title="${posts.json[0].title}"`);
     }
 
-    const html = await get('http://127.0.0.1:8322/');
+    const html = await get(`http://127.0.0.1:${TEST_PORT}/`);
     if (html.status !== 200 || !html.body.includes('<!DOCTYPE html>')) {
-      throw new Error('GET / failed to return HTML UI');
+      throw new Error(`GET / failed (status ${html.status})`);
     }
     console.log('[Test] GET / OK: HTML template served.');
 
     console.log('\n✅ All standalone CMS tests passed successfully!');
   } finally {
-    console.log('[Test] Terminating CMS server process...');
-    cmsProc.kill('SIGINT');
+    console.log('[Test] Terminating CMS test process...');
+    cmsProc.kill();
     await new Promise(r => setTimeout(r, 600));
   }
 }

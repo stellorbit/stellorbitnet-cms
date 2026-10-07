@@ -15,7 +15,7 @@ try {
   // .envが存在しない場合は無視
 }
 
-const cmsRoot = process.cwd();
+const cmsRoot = path.resolve(import.meta.dirname, '..');
 const DEFAULT_SITE_ROOT = path.resolve(cmsRoot, '../Website-Stellorbit');
 const siteRoot = process.env.WEBSITE_ROOT ? path.resolve(process.env.WEBSITE_ROOT) : DEFAULT_SITE_ROOT;
 const DEFAULT_PORT = Number(process.env.CMS_PORT) || 8322;
