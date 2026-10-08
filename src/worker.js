@@ -19,24 +19,24 @@ function jsonResponse(data, status = 200) {
   });
 }
 
-function errorResponse(message, status = 500) {
-  return jsonResponse({ error: message }, status);
+function errorResponse(message, status = 500, details = null) {
+  return jsonResponse({ error: message, details }, status);
 }
 
 // GitHub API Helpers
 async function callGitHub(path, env, options = {}) {
   const owner = env.GITHUB_OWNER || 'stellorbit';
-  const repo = env.GITHUB_REPO || 'Website-Stellorbit';
+  const repo = env.GITHUB_REPO || 'stellorbitnet-ver2';
   const token = env.GITHUB_PAT;
 
   if (!token) {
-    throw new Error('GITHUB_PAT is not configured in Worker environment.');
+    throw new Error('GITHUB_PAT is not configured in Worker environment variables.');
   }
 
   const url = `https://api.github.com/repos/${owner}/${repo}${path}`;
   const headers = {
     'User-Agent': 'stellorbit-cms-worker',
-    'Accept': 'application/vnd.github.v3+json',
+    'Accept': options.raw ? 'application/vnd.github.v3.raw' : 'application/vnd.github.v3+json',
     'Authorization': `Bearer ${token}`,
     ...(options.headers || {}),
   };
@@ -49,13 +49,14 @@ async function callGitHub(path, env, options = {}) {
   return response;
 }
 
-// Fetch file contents from GitHub
+// Fetch file contents (text) from GitHub
 async function getGitHubFile(filePath, env) {
   const branch = env.GITHUB_BRANCH || 'main';
   const res = await callGitHub(`/contents/${filePath}?ref=${branch}`, env);
   if (!res.ok) {
     if (res.status === 404) return null;
-    throw new Error(`GitHub API error (${res.status}): ${await res.text()}`);
+    const errText = await res.text();
+    throw new Error(`GitHub API error (${res.status}) on ${filePath}: ${errText}`);
   }
   const data = await res.json();
   const content = atob(data.content.replace(/\n/g, ''));
@@ -65,15 +66,36 @@ async function getGitHubFile(filePath, env) {
   return { content: decoded, sha: data.sha };
 }
 
+// Fetch binary file from GitHub (e.g. images)
+async function getGitHubBinary(filePath, env) {
+  const branch = env.GITHUB_BRANCH || 'main';
+  const res = await callGitHub(`/contents/${filePath}?ref=${branch}`, env, { raw: true });
+  if (!res.ok) {
+    if (res.status === 404) return null;
+    throw new Error(`GitHub Binary error (${res.status}) on ${filePath}`);
+  }
+  return await res.arrayBuffer();
+}
+
 // Commit/Create/Update file on GitHub
 async function putGitHubFile(filePath, content, message, sha, env) {
   const branch = env.GITHUB_BRANCH || 'main';
-  const bytes = new TextEncoder().encode(content);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  let base64Content = '';
+  if (typeof content === 'string') {
+    const bytes = new TextEncoder().encode(content);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    base64Content = btoa(binary);
+  } else if (content instanceof ArrayBuffer || content instanceof Uint8Array) {
+    const bytes = new Uint8Array(content);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    base64Content = btoa(binary);
   }
-  const base64Content = btoa(binary);
 
   const body = {
     message,
@@ -117,31 +139,123 @@ export default {
 
     const url = new URL(request.url);
 
-    // API Routing
+    // 1. Health check & Diagnostics API
+    if (url.pathname === '/api/health') {
+      return jsonResponse({
+        status: 'ok',
+        mode: 'cloudflare-worker',
+        hasPat: Boolean(env.GITHUB_PAT),
+        owner: env.GITHUB_OWNER || 'stellorbit',
+        repo: env.GITHUB_REPO || 'stellorbitnet-ver2',
+        branch: env.GITHUB_BRANCH || 'main',
+      });
+    }
+
+    // 2. Serve thumbnails from GitHub (src/assets/post-thumbnails/<file>)
+    if (url.pathname.startsWith('/api/thumbnails/')) {
+      try {
+        const filename = decodeURIComponent(url.pathname.replace('/api/thumbnails/', ''));
+        const filePath = `src/assets/post-thumbnails/${filename}`;
+        const buffer = await getGitHubBinary(filePath, env);
+        if (!buffer) {
+          return new Response('Thumbnail Not Found', { status: 404, headers: CORS_HEADERS });
+        }
+        const ext = filename.split('.').pop().toLowerCase();
+        const contentType = ext === 'webp' ? 'image/webp' : ext === 'png' ? 'image/png' : 'image/jpeg';
+        return new Response(buffer, {
+          status: 200,
+          headers: {
+            'Content-Type': contentType,
+            'Cache-Control': 'public, max-age=86400',
+            ...CORS_HEADERS,
+          },
+        });
+      } catch (err) {
+        return new Response('Thumbnail Error: ' + err.message, { status: 500, headers: CORS_HEADERS });
+      }
+    }
+
+    // 3. Serve public images from GitHub (public/images/<file>)
+    if (url.pathname.startsWith('/images/')) {
+      try {
+        const relativePath = decodeURIComponent(url.pathname.replace(/^\/images\/?/, ''));
+        const filePath = `public/images/${relativePath}`;
+        const buffer = await getGitHubBinary(filePath, env);
+        if (!buffer) {
+          return new Response('Image Not Found', { status: 404, headers: CORS_HEADERS });
+        }
+        const ext = relativePath.split('.').pop().toLowerCase();
+        const mimeTypes = {
+          webp: 'image/webp',
+          png: 'image/png',
+          jpg: 'image/jpeg',
+          jpeg: 'image/jpeg',
+          svg: 'image/svg+xml',
+          gif: 'image/gif',
+          avif: 'image/avif',
+        };
+        return new Response(buffer, {
+          status: 200,
+          headers: {
+            'Content-Type': mimeTypes[ext] || 'application/octet-stream',
+            'Cache-Control': 'public, max-age=86400',
+            ...CORS_HEADERS,
+          },
+        });
+      } catch (err) {
+        return new Response('Image Error: ' + err.message, { status: 500, headers: CORS_HEADERS });
+      }
+    }
+
+    // 4. API Routing
     if (url.pathname.startsWith('/api/')) {
       try {
-        // Health check
-        if (url.pathname === '/api/health') {
-          return jsonResponse({
-            status: 'ok',
-            mode: 'cloudflare-worker',
-            hasPat: Boolean(env.GITHUB_PAT),
-            owner: env.GITHUB_OWNER || 'stellorbit',
-            repo: env.GITHUB_REPO || 'Website-Stellorbit',
-            branch: env.GITHUB_BRANCH || 'main',
-          });
-        }
-
         // Fetch Post Metadata
         if (url.pathname === '/api/posts' && request.method === 'GET') {
-          const metaFile = await getGitHubFile('src/data/astro-posts.ts', env) || await getGitHubFile('astro-posts.ts', env);
-          if (!metaFile) {
-            return jsonResponse([]);
+          // Search candidates for astro-posts.ts
+          const candidatePaths = [
+            'src/content/astro-posts.ts',
+            'src/data/astro-posts.ts',
+            'astro-posts.ts',
+          ];
+          let metaFile = null;
+          let matchedPath = '';
+
+          for (const p of candidatePaths) {
+            metaFile = await getGitHubFile(p, env);
+            if (metaFile) {
+              matchedPath = p;
+              break;
+            }
           }
-          // Parse metadata using regex similar to dev-cms.mjs
+
+          if (!metaFile) {
+            return errorResponse(`Could not find astro-posts.ts in repository (checked: ${candidatePaths.join(', ')})`, 404, {
+              owner: env.GITHUB_OWNER || 'stellorbit',
+              repo: env.GITHUB_REPO || 'stellorbitnet-ver2',
+              branch: env.GITHUB_BRANCH || 'main',
+            });
+          }
+
+          // Check available thumbnails in repository
+          const branch = env.GITHUB_BRANCH || 'main';
+          const treeRes = await callGitHub(`/git/trees/${branch}?recursive=1`, env);
+          const existingThumbnails = new Set();
+          if (treeRes.ok) {
+            const treeData = await treeRes.json();
+            for (const item of (treeData.tree || [])) {
+              if (item.path.startsWith('src/assets/post-thumbnails/')) {
+                const fname = item.path.replace('src/assets/post-thumbnails/', '');
+                existingThumbnails.add(fname);
+              }
+            }
+          }
+
+          // Parse metadata
           const metaText = metaFile.content;
           const posts = [];
           const slugMatches = [...metaText.matchAll(/\{\s*slug:\s*['"]([^'"]+)['"]/g)];
+
           for (let i = 0; i < slugMatches.length; i++) {
             const currentMatch = slugMatches[i];
             const slug = currentMatch[1];
@@ -162,6 +276,14 @@ export default {
               return str.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
             };
 
+            let thumbFile = null;
+            for (const ext of ['.webp', '.png', '.jpg', '.jpeg']) {
+              if (existingThumbnails.has(`${slug}${ext}`)) {
+                thumbFile = `${slug}${ext}`;
+                break;
+              }
+            }
+
             posts.push({
               slug: String(slug || ''),
               title: titleMatch ? titleMatch[1] : String(slug || ''),
@@ -170,9 +292,11 @@ export default {
               tags: tagsMatch ? parseList(tagsMatch[1]) : [],
               categories: catMatch ? parseList(catMatch[1]) : [],
               draft: Boolean(draftMatch),
-              hasThumbnail: false,
+              hasThumbnail: Boolean(thumbFile),
+              thumbnailFile: thumbFile,
             });
           }
+
           return jsonResponse(posts.reverse());
         }
 
@@ -182,7 +306,7 @@ export default {
           if (!slug) return errorResponse('Missing slug', 400);
 
           const file = await getGitHubFile(`src/articles/${slug}.astro`, env);
-          if (!file) return errorResponse(`Article ${slug}.astro not found`, 404);
+          if (!file) return errorResponse(`Article src/articles/${slug}.astro not found`, 404);
 
           return jsonResponse({ slug, content: file.content, sha: file.sha });
         }
@@ -207,7 +331,6 @@ export default {
         // Media List
         if (url.pathname === '/api/media/list' && request.method === 'GET') {
           const branch = env.GITHUB_BRANCH || 'main';
-          // Use GitHub Git Tree API to recursively list public/images
           const treeRes = await callGitHub(`/git/trees/${branch}?recursive=1`, env);
           if (!treeRes.ok) {
             return errorResponse(`Failed to fetch git tree: ${await treeRes.text()}`, 500);
@@ -237,13 +360,30 @@ export default {
           });
         }
 
-        return errorResponse('API Not Found', 404);
+        // Delete Media Asset
+        if (url.pathname === '/api/media/delete' && request.method === 'POST') {
+          const body = await request.json();
+          if (!body.url) return errorResponse('Missing url', 400);
+
+          const filePath = 'public' + body.url;
+          // Get SHA of file
+          const branch = env.GITHUB_BRANCH || 'main';
+          const fileRes = await callGitHub(`/contents/${filePath}?ref=${branch}`, env);
+          if (!fileRes.ok) {
+            return errorResponse(`File not found on GitHub: ${filePath}`, 404);
+          }
+          const fileData = await fileRes.json();
+          const result = await deleteGitHubFile(filePath, `cms: delete media ${filePath}`, fileData.sha, env);
+          return jsonResponse({ success: true, deletedPath: body.url, result });
+        }
+
+        return errorResponse('API Not Found: ' + url.pathname, 404);
       } catch (err) {
         return errorResponse(err.message, 500);
       }
     }
 
-    // Serve static frontend assets (via Assets binding)
+    // 5. Serve static frontend assets (via Assets binding)
     if (env.ASSETS) {
       return env.ASSETS.fetch(request);
     }

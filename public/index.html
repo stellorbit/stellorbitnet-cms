@@ -2127,13 +2127,26 @@
     async function loadPosts(silent) {
       try {
         const res = await fetch('/api/posts');
-        if (!res.ok) throw new Error('API returned status ' + res.status);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          const errMsg = errData.error || ('API returned status ' + res.status);
+          const detailStr = errData.details ? ' [' + JSON.stringify(errData.details) + ']' : '';
+          throw new Error(errMsg + detailStr);
+        }
         allPosts = await res.json();
         if (!isStandaloneMode) {
           renderPosts(allPosts);
         }
       } catch (err) {
         console.error('Error loading posts:', err);
+        const grid = document.getElementById('posts-grid');
+        if (grid) {
+          grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--danger); padding: 3rem; background: #fff5f5; border: 1px solid #fed7d7; border-radius: 8px;">' +
+            '<div style="font-size: 1.1rem; font-weight: bold; margin-bottom: 0.5rem;">⚠️ 記事の取得に失敗しました</div>' +
+            '<div style="font-size: 0.85rem; color: #4a5568; margin-bottom: 1rem; word-break: break-all;">' + escapeHtml(err.message) + '</div>' +
+            '<button class="btn-secondary btn-sm" onclick="loadPosts()">🔄 再試行</button>' +
+            '</div>';
+        }
         if (!silent) showToast('❌ 記事の読み込みに失敗しました: ' + err.message);
       }
     }
@@ -2147,6 +2160,18 @@
       if (!grid) return;
       if (!Array.isArray(posts)) {
         grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--danger); padding: 3rem;">データの形式が正しくありません</div>';
+        return;
+      }
+
+      if (posts.length === 0) {
+        grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 3rem; background: var(--bg-card); border: 1px dashed var(--border); border-radius: 8px;">' +
+          '<div style="font-size: 1rem; font-weight: 600; margin-bottom: 0.4rem;">📭 記事が見つかりませんでした</div>' +
+          '<div style="font-size: 0.82rem;">GitHubリポジトリ（src/content/astro-posts.ts）の接続状況を確認してください。</div>' +
+          '<button class="btn-secondary btn-sm" style="margin-top: 0.8rem;" onclick="loadPosts()">🔄 再読み込み</button>' +
+          '</div>';
+        if (totalEl) totalEl.textContent = '0';
+        if (pubEl) pubEl.textContent = '0';
+        if (draftEl) draftEl.textContent = '0';
         return;
       }
 
