@@ -1434,6 +1434,167 @@
       }
     }
   
+  
+    /* --- Phase 3: Media Manager & Asset Browser Styles --- */
+    #media-manager-modal, #media-picker-modal {
+      z-index: 2400 !important;
+    }
+    .media-modal-container {
+      width: 95vw;
+      max-width: 1200px;
+      height: 88vh;
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      padding: 1.5rem !important;
+    }
+    .media-filter-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+    .media-filter-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .media-tabs {
+      display: flex;
+      gap: 0.35rem;
+      background: #e2e8f0;
+      padding: 0.2rem;
+      border-radius: 6px;
+    }
+    .media-tab {
+      padding: 0.35rem 0.75rem;
+      border-radius: 4px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .media-tab.active {
+      background: #ffffff;
+      color: var(--primary);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .media-grid {
+      flex: 1;
+      overflow-y: auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 1rem;
+      padding: 0.5rem 0.2rem;
+    }
+    .media-card {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 235px;
+      transition: all 0.15s ease;
+      cursor: pointer;
+      position: relative;
+    }
+    .media-card:hover {
+      border-color: var(--primary);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+      transform: translateY(-2px);
+    }
+    .media-card.selected {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px var(--primary);
+    }
+    .media-card-thumb {
+      width: 100%;
+      height: 120px;
+      min-height: 120px;
+      flex-shrink: 0;
+      background: #f1f5f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .media-card-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 0.2s;
+    }
+    .media-card:hover .media-card-thumb img {
+      transform: scale(1.04);
+    }
+    .media-card-info {
+      padding: 0.6rem 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      flex: 1;
+      flex-shrink: 0;
+    }
+    .media-card-name {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text-main);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .media-card-meta {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .media-badge {
+      display: inline-block;
+      font-size: 0.68rem;
+      font-weight: 600;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      background: #eff6ff;
+      color: var(--primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+    .media-badge.unused {
+      background: #fef3c7;
+      color: #b45309;
+    }
+    .media-card-actions {
+      padding: 0.5rem 0.6rem;
+      border-top: 1px solid #f1f5f9;
+      display: flex;
+      gap: 0.4rem;
+      justify-content: flex-end;
+      align-items: center;
+      background: #fafafa;
+      flex-shrink: 0;
+      margin-top: auto;
+    }
+    .media-card-actions button {
+      padding: 0.25rem 0.6rem;
+      font-size: 0.74rem;
+      border-radius: 4px;
+    }
+  
   </style>
 </head>
 <body>
@@ -1449,7 +1610,8 @@
         </button>
       </div>
       <button class="btn-secondary" onclick="triggerFullSync()" title="見出し・データを最新状態に同期">🔄 最新同期</button>
-      <button class="btn-secondary" onclick="triggerCheckImages()">🖼️ 画像チェック</button>
+      <button class="btn-secondary" onclick="openMediaManagerModal()" id="btn-media-manager">🖼️ メディア管理</button>
+      <button class="btn-secondary" onclick="triggerCheckImages()" title="記事内の画像参照整合性をチェック">🔍 整合性チェック</button>
       <button class="btn-primary" onclick="openCreateModal()">✨ 新規記事を作成</button>
     </div>
   </header>
@@ -1658,7 +1820,8 @@
         <button class="tb-icon-btn" onclick="modifyTable('delCol')" title="選択中の表の列を削除">−列</button>
         <button class="tb-text-btn" onclick="openEmbedModal()" title="X (Twitter)、Webサイト、YouTube のURLをリッチ埋め込み">🌐 埋め込み</button>
         <button class="tb-text-btn" id="tb-btn-toc" onclick="toggleTocPanel()" title="記事の見出し目次ツリーを表示/非表示">📑 目次</button>
-        <button class="tb-text-btn" onclick="triggerEditorImageUpload()" title="画像をドラッグ＆ドロップまたはファイル選択してWebP即時配置">🖼️ 画像追加</button>
+        <button class="tb-text-btn" onclick="triggerEditorImageUpload()" title="新規画像をドラッグ＆ドロップまたはファイル選択してWebP即時配置">🖼️ 新規画像</button>
+        <button class="tb-text-btn" id="tb-btn-media-picker" onclick="openMediaPickerModal()" title="既存のアップロード済み画像一覧から選択して本文に配置">🗃️ メディア選択</button>
         <button class="tb-text-btn" onclick="addCaptionToActiveImage()" title="選択中・または既存の画像にキャプションを追加/修正">💬 キャプション</button>
       </div>
 
@@ -1784,6 +1947,83 @@
         <div style="display:flex; justify-content:flex-end; gap:0.6rem; margin-top:0.5rem;">
           <button class="btn-secondary" onclick="closeEmbedModal()">キャンセル</button>
           <button class="btn-primary" id="btn-confirm-embed" onclick="confirmInsertEmbed()">埋め込みを実行</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  
+  <!-- Phase 3: Media Manager Modal (All Assets & Unused Cleanup) -->
+  <div class="modal-overlay" id="media-manager-modal">
+    <div class="modal media-modal-container">
+      <div class="modal-header">
+        <div style="display:flex; align-items:center; gap:0.6rem;">
+          <h3 class="modal-title">🖼️ メディアアセット管理</h3>
+          <span class="badge badge-published" id="media-stats-badge">読み込み中...</span>
+        </div>
+        <button class="btn-secondary btn-sm" onclick="closeMediaManagerModal()">✕</button>
+      </div>
+
+      <!-- Filter & Search Bar -->
+      <div class="media-filter-bar">
+        <div class="media-filter-group">
+          <div class="media-tabs">
+            <button class="media-tab active" id="tab-media-all" onclick="setMediaManagerTab('all')">全画像</button>
+            <button class="media-tab" id="tab-media-used" onclick="setMediaManagerTab('used')">使用中のみ</button>
+            <button class="media-tab" id="tab-media-unused" onclick="setMediaManagerTab('unused')">🧹 未使用のみ</button>
+          </div>
+          <select id="media-slug-select" class="tb-select" onchange="filterMediaGrid()" style="max-width:200px;">
+            <option value="">全記事フォルダ</option>
+          </select>
+        </div>
+        <div class="media-filter-group">
+          <input type="text" id="media-search-input" class="tb-input" placeholder="ファイル名で検索..." oninput="filterMediaGrid()" style="width:200px;">
+          <button class="btn-secondary btn-sm" onclick="loadMediaManagerData(true)" title="メディア一覧を再読み込み">🔄 更新</button>
+        </div>
+      </div>
+
+      <!-- Media Grid -->
+      <div class="media-grid" id="media-manager-grid">
+        <div style="grid-column: 1/-1; text-align:center; padding:3rem; color:var(--text-muted);">
+          ⏳ メディアアセットを読み込み中...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Phase 3: Media Picker Modal (For Editor Insert) -->
+  <div class="modal-overlay" id="media-picker-modal">
+    <div class="modal media-modal-container" style="max-width:960px; height:80vh;">
+      <div class="modal-header">
+        <h3 class="modal-title">🗃️ 記事に挿入する画像を選択</h3>
+        <button class="btn-secondary btn-sm" onclick="closeMediaPickerModal()">✕</button>
+      </div>
+
+      <div class="media-filter-bar">
+        <div class="media-filter-group">
+          <div class="media-tabs">
+            <button class="media-tab active" id="tab-picker-article" onclick="setMediaPickerTab('article')">この記事の画像</button>
+            <button class="media-tab" id="tab-picker-all" onclick="setMediaPickerTab('all')">全メディアから選択</button>
+          </div>
+        </div>
+        <div class="media-filter-group">
+          <input type="text" id="media-picker-search" class="tb-input" placeholder="検索..." oninput="filterPickerGrid()" style="width:180px;">
+        </div>
+      </div>
+
+      <div class="media-grid" id="media-picker-grid" style="flex:1;">
+        <!-- Picker items -->
+      </div>
+
+      <!-- Selected image & Caption Footer -->
+      <div style="padding-top:1rem; border-top:1px solid var(--border); display:flex; gap:0.75rem; align-items:center; justify-content:space-between;">
+        <div style="flex:1; display:flex; align-items:center; gap:0.6rem;">
+          <span style="font-size:0.85rem; font-weight:600; color:var(--text-main);">キャプション (任意):</span>
+          <input type="text" id="picker-caption-input" placeholder="画像の説明・注釈..." style="flex:1; max-width:400px; padding:0.45rem 0.75rem; border:1px solid var(--border); border-radius:6px; font-family:inherit; font-size:0.85rem;">
+        </div>
+        <div style="display:flex; gap:0.6rem;">
+          <button class="btn-secondary" onclick="closeMediaPickerModal()">キャンセル</button>
+          <button class="btn-primary" id="btn-confirm-insert-picked" onclick="confirmInsertPickedMedia()" disabled>選択した画像を本文に配置</button>
         </div>
       </div>
     </div>
@@ -3054,7 +3294,7 @@
       }
       if (e.key === 'Escape') {
         // 子モーダルが開いている場合は優先して閉じる
-        const subModals = ['table-modal', 'code-modal', 'embed-modal'];
+        const subModals = ['table-modal', 'code-modal', 'embed-modal', 'media-manager-modal', 'media-picker-modal'];
         let subClosed = false;
         for (const mId of subModals) {
           const el = document.getElementById(mId);
@@ -3740,7 +3980,7 @@
     }
 
     // モーダル背景クリックでの安全なクローズ設定
-    ['table-modal', 'code-modal', 'embed-modal'].forEach(id => {
+    ['table-modal', 'code-modal', 'embed-modal', 'media-manager-modal', 'media-picker-modal'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         el.addEventListener('click', function(e) {
@@ -3750,6 +3990,321 @@
         });
       }
     });
+  
+  
+    /* =========================================================
+       Phase 3: メディア管理 & 画像ピッカーロジック
+       ========================================================= */
+    var allMediaData = [];
+    var currentMediaFilterTab = 'all';
+    var selectedPickerItem = null;
+    var currentPickerTab = 'article';
+    var savedPickerRange = null;
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+    }
+
+    // 1. メディア管理モーダル
+    async function openMediaManagerModal() {
+      document.getElementById('media-manager-modal').classList.add('active');
+      await loadMediaManagerData();
+    }
+
+    function closeMediaManagerModal() {
+      document.getElementById('media-manager-modal').classList.remove('active');
+    }
+
+    async function loadMediaManagerData(force) {
+      const grid = document.getElementById('media-manager-grid');
+      const badge = document.getElementById('media-stats-badge');
+      if (!force && allMediaData.length > 0) {
+        renderMediaManagerGrid();
+        return;
+      }
+      grid.innerHTML = '<div style="grid-column: 1/-1; text-align:center; padding:3rem; color:var(--text-muted);">⏳ メディアをスキャン中...</div>';
+
+      try {
+        const res = await fetch('/api/media/list');
+        const data = await res.json();
+        allMediaData = data.images || [];
+
+        badge.textContent = allMediaData.length + ' 件 (' + formatBytes(data.totalSize) + ') | 未使用: ' + data.unusedCount + ' 件';
+        populateMediaSlugSelect();
+        renderMediaManagerGrid();
+      } catch (err) {
+        grid.innerHTML = '<div style="grid-column: 1/-1; text-align:center; color:var(--danger); padding:2rem;">❌ メディア読み込み失敗: ' + escapeHtml(err.message) + '</div>';
+      }
+    }
+
+    function populateMediaSlugSelect() {
+      const select = document.getElementById('media-slug-select');
+      const currentVal = select.value;
+      const slugs = Array.from(new Set(allMediaData.map(m => m.slug).filter(Boolean))).sort();
+      select.innerHTML = '<option value="">全記事フォルダ</option>';
+      slugs.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        select.appendChild(opt);
+      });
+      select.value = currentVal;
+    }
+
+    function setMediaManagerTab(tab) {
+      currentMediaFilterTab = tab;
+      document.querySelectorAll('#media-manager-modal .media-tab').forEach(b => b.classList.remove('active'));
+      const activeBtn = document.getElementById('tab-media-' + tab);
+      if (activeBtn) activeBtn.classList.add('active');
+      filterMediaGrid();
+    }
+
+    function filterMediaGrid() {
+      renderMediaManagerGrid();
+    }
+
+    function renderMediaManagerGrid() {
+      const grid = document.getElementById('media-manager-grid');
+      const search = (document.getElementById('media-search-input').value || '').toLowerCase().trim();
+      const slugFilter = document.getElementById('media-slug-select').value;
+
+      let filtered = allMediaData;
+
+      if (currentMediaFilterTab === 'used') {
+        filtered = filtered.filter(m => !m.isUnused);
+      } else if (currentMediaFilterTab === 'unused') {
+        filtered = filtered.filter(m => m.isUnused);
+      }
+
+      if (slugFilter) {
+        filtered = filtered.filter(m => m.slug === slugFilter);
+      }
+
+      if (search) {
+        filtered = filtered.filter(m => m.filename.toLowerCase().includes(search) || (m.slug && m.slug.toLowerCase().includes(search)));
+      }
+
+      if (filtered.length === 0) {
+        grid.innerHTML = '<div style="grid-column: 1/-1; text-align:center; padding:3rem; color:var(--text-muted);">該当する画像アセットがありません</div>';
+        return;
+      }
+
+      grid.innerHTML = '';
+      filtered.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'media-card';
+        card.title = item.url + ' (' + formatBytes(item.size) + ')';
+
+        const thumbBox = document.createElement('div');
+        thumbBox.className = 'media-card-thumb';
+        const img = document.createElement('img');
+        img.src = item.url;
+        img.alt = item.filename;
+        img.loading = 'lazy';
+        thumbBox.appendChild(img);
+
+        const info = document.createElement('div');
+        info.className = 'media-card-info';
+        
+        const nameEl = document.createElement('div');
+        nameEl.className = 'media-card-name';
+        nameEl.textContent = item.filename;
+
+        const metaEl = document.createElement('div');
+        metaEl.className = 'media-card-meta';
+        metaEl.innerHTML = '<span>' + formatBytes(item.size) + '</span>' +
+          '<span class="media-badge' + (item.isUnused ? ' unused' : '') + '">' + 
+          (item.isUnused ? '未使用' : (item.slug || '共通')) + 
+          '</span>';
+
+        info.appendChild(nameEl);
+        info.appendChild(metaEl);
+
+        const actions = document.createElement('div');
+        actions.className = 'media-card-actions';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'btn-secondary btn-sm';
+        copyBtn.textContent = '📋 URL';
+        copyBtn.onclick = function(e) {
+          e.stopPropagation();
+          navigator.clipboard.writeText(item.url);
+          showToast('✅ 画像URLをコピーしました: ' + item.url, '📋');
+        };
+
+        actions.appendChild(copyBtn);
+
+        if (item.isUnused) {
+          const delBtn = document.createElement('button');
+          delBtn.className = 'btn-secondary btn-sm';
+          delBtn.style.color = 'var(--danger)';
+          delBtn.textContent = '🗑️ 削除';
+          delBtn.onclick = async function(e) {
+            e.stopPropagation();
+            if (!confirm('【確認】未使用画像 "' + item.filename + '" を完全に削除しますか？')) return;
+            try {
+              const res = await fetch('/api/media/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: item.url })
+              });
+              const resData = await res.json();
+              if (res.ok && resData.success) {
+                showToast('🗑️ 画像を削除しました: ' + item.filename, '🗑️');
+                await loadMediaManagerData(true);
+              } else {
+                showToast('❌ 削除失敗: ' + (resData.error || ''));
+              }
+            } catch (err) {
+              showToast('❌ 削除エラー: ' + err.message);
+            }
+          };
+          actions.appendChild(delBtn);
+        }
+
+        card.appendChild(thumbBox);
+        card.appendChild(info);
+        card.appendChild(actions);
+
+        // Click to view full image in new tab
+        card.onclick = function() {
+          window.open(item.url, '_blank');
+        };
+
+        grid.appendChild(card);
+      });
+    }
+
+    // 2. エディタ内メディアピッカーモーダル
+    async function openMediaPickerModal() {
+      if (currentEditorMode !== 'visual') {
+        showToast('⚠️ ビジュアルモードでお試しください', '⚠️');
+        return;
+      }
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount) {
+        savedPickerRange = sel.getRangeAt(0).cloneRange();
+      }
+      selectedPickerItem = null;
+      document.getElementById('picker-caption-input').value = '';
+      document.getElementById('btn-confirm-insert-picked').disabled = true;
+      document.getElementById('media-picker-modal').classList.add('active');
+
+      if (allMediaData.length === 0) {
+        await loadMediaManagerData();
+      }
+      setMediaPickerTab('article');
+    }
+
+    function closeMediaPickerModal() {
+      document.getElementById('media-picker-modal').classList.remove('active');
+      savedPickerRange = null;
+      selectedPickerItem = null;
+    }
+
+    function setMediaPickerTab(tab) {
+      currentPickerTab = tab;
+      document.querySelectorAll('#media-picker-modal .media-tab').forEach(b => b.classList.remove('active'));
+      const activeBtn = document.getElementById('tab-picker-' + tab);
+      if (activeBtn) activeBtn.classList.add('active');
+      renderPickerGrid();
+    }
+
+    function filterPickerGrid() {
+      renderPickerGrid();
+    }
+
+    function renderPickerGrid() {
+      const grid = document.getElementById('media-picker-grid');
+      const search = (document.getElementById('media-picker-search').value || '').toLowerCase().trim();
+      const currentSlug = activeEditorSlug;
+
+      let filtered = allMediaData;
+
+      if (currentPickerTab === 'article' && currentSlug) {
+        filtered = filtered.filter(m => m.slug === currentSlug);
+      }
+
+      if (search) {
+        filtered = filtered.filter(m => m.filename.toLowerCase().includes(search) || (m.slug && m.slug.toLowerCase().includes(search)));
+      }
+
+      if (filtered.length === 0) {
+        grid.innerHTML = '<div style="grid-column: 1/-1; text-align:center; padding:3rem; color:var(--text-muted);">' + 
+          (currentPickerTab === 'article' ? 'この記事専用フォルダには画像がありません（「全メディアから選択」もお試しください）' : '該当する画像がありません') + 
+          '</div>';
+        return;
+      }
+
+      grid.innerHTML = '';
+      filtered.forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'media-card' + (selectedPickerItem && selectedPickerItem.url === item.url ? ' selected' : '');
+
+        const thumbBox = document.createElement('div');
+        thumbBox.className = 'media-card-thumb';
+        const img = document.createElement('img');
+        img.src = item.url;
+        img.alt = item.filename;
+        img.loading = 'lazy';
+        thumbBox.appendChild(img);
+
+        const info = document.createElement('div');
+        info.className = 'media-card-info';
+        info.innerHTML = '<div class="media-card-name">' + escapeHtml(item.filename) + '</div>' +
+          '<div class="media-card-meta"><span>' + formatBytes(item.size) + '</span><span class="media-badge">' + (item.slug || '共通') + '</span></div>';
+
+        card.appendChild(thumbBox);
+        card.appendChild(info);
+
+        card.onclick = function() {
+          selectedPickerItem = item;
+          document.querySelectorAll('#media-picker-grid .media-card').forEach(c => c.classList.remove('selected'));
+          card.classList.add('selected');
+          document.getElementById('btn-confirm-insert-picked').disabled = false;
+        };
+
+        grid.appendChild(card);
+      });
+    }
+
+    function confirmInsertPickedMedia() {
+      if (!selectedPickerItem) return;
+      const captionText = (document.getElementById('picker-caption-input').value || '').trim();
+
+      const figure = document.createElement('figure');
+      const img = document.createElement('img');
+      img.src = selectedPickerItem.url;
+      img.alt = captionText || selectedPickerItem.filename;
+      figure.appendChild(img);
+
+      if (captionText) {
+        const figcaption = document.createElement('figcaption');
+        figcaption.textContent = captionText;
+        figcaption.contentEditable = 'true';
+        figure.appendChild(figcaption);
+      }
+
+      const canvas = document.getElementById('wysiwyg-canvas');
+      canvas.focus();
+      if (savedPickerRange) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(savedPickerRange);
+        savedPickerRange.deleteContents();
+        savedPickerRange.insertNode(figure);
+      } else {
+        canvas.appendChild(figure);
+      }
+
+      bindImageClickHandlers();
+      closeMediaPickerModal();
+      showToast('✅ 選択した画像を本文に配置しました！', '🖼️');
+    }
   
   </script>
 </body>

@@ -451,6 +451,116 @@ async function fetchOgpData(rawUrl) {
   };
 }
 
+
+// =========================================================
+// Phase 3: Media Asset Scanner & Management Helpers
+// =========================================================
+async function getMediaAssets(filterSlug = null) {
+  const images = [];
+  const publicImagesDir = path.join(siteRoot, 'public', 'images');
+  
+  // 1. Scan articles to build reference map
+  const usedImagesMap = new Map(); // urlPath => Set of slugs
+  const articlesDir = path.join(siteRoot, 'src', 'articles');
+  try {
+    const articleFiles = await fs.readdir(articlesDir);
+    for (const file of articleFiles) {
+      if (file.endsWith('.astro')) {
+        const slug = file.replace(/\.astro$/, '');
+        const content = await fs.readFile(path.join(articlesDir, file), 'utf8');
+        // Match both HTML src="/images/..." and Markdown ![](/images/...)
+        const matches = content.matchAll(/(?:src=["']|!\[.*?\]\()(?<path>\/images\/[^"')\s]+)/g);
+        for (const m of matches) {
+          const imgPath = m.groups.path;
+          if (!usedImagesMap.has(imgPath)) {
+            usedImagesMap.set(imgPath, new Set());
+          }
+          usedImagesMap.get(imgPath).add(slug);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('Error scanning articles for image references:', e);
+  }
+
+  // 2. Scan public/images directory recursively
+  async function scanDir(currentDir, relativePrefix = '/images') {
+    try {
+      const entries = await fs.readdir(currentDir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        const urlPath = `${relativePrefix}/${entry.name}`;
+        if (entry.isDirectory()) {
+          await scanDir(fullPath, urlPath);
+        } else if (entry.isFile() && /\.(webp|png|jpg|jpeg|gif|svg|avif)$/i.test(entry.name)) {
+          const stat = await fs.stat(fullPath);
+          let itemSlug = null;
+          const postsMatch = urlPath.match(/^\/images\/posts\/([^/]+)\//);
+          if (postsMatch) {
+            itemSlug = postsMatch[1];
+          }
+
+          if (filterSlug && itemSlug !== filterSlug) {
+            continue;
+          }
+
+          const usedBy = usedImagesMap.has(urlPath) ? Array.from(usedImagesMap.get(urlPath)) : [];
+
+          images.push({
+            filename: entry.name,
+            url: urlPath,
+            slug: itemSlug,
+            size: stat.size,
+            mtime: stat.mtime.toISOString(),
+            usedBy,
+            isUnused: usedBy.length === 0
+          });
+        }
+      }
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e;
+    }
+  }
+
+  await scanDir(publicImagesDir, '/images');
+
+  // Sort by mtime desc
+  images.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+
+  const totalSize = images.reduce((sum, img) => sum + img.size, 0);
+  const unusedCount = images.filter(img => img.isUnused).length;
+
+  return {
+    images,
+    totalCount: images.length,
+    totalSize,
+    unusedCount
+  };
+}
+
+async function deleteMediaAsset(relativeUrl) {
+  const decodedPath = decodeURIComponent(relativeUrl);
+  if (!decodedPath.startsWith('/images/')) {
+    throw new Error('不正な画像パスです');
+  }
+  
+  // 拡張子制限（画像ファイルのみ許可）
+  if (!/\.(webp|png|jpg|jpeg|gif|svg|avif)$/i.test(decodedPath)) {
+    throw new Error('削除対象は画像ファイルのみに限定されています');
+  }
+
+  const publicImagesRoot = path.resolve(siteRoot, 'public', 'images');
+  const diskPath = path.resolve(publicImagesRoot, decodedPath.replace(/^\/images\/?/, ''));
+
+  // パストラバーサル防止チェック
+  if (!diskPath.startsWith(publicImagesRoot)) {
+    throw new Error('許可されていないパスへのアクセスです');
+  }
+
+  await fs.unlink(diskPath);
+  return { success: true, deletedPath: relativeUrl };
+}
+
 // Request Handler
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -594,6 +704,48 @@ const server = http.createServer(async (req, res) => {
     } catch {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       return res.end('Image Not Found');
+    }
+  }
+
+  
+  // Media Assets API (Phase 3)
+  if (method === 'GET' && url.pathname === '/api/media/list') {
+    try {
+      const slug = url.searchParams.get('slug');
+      const result = await getMediaAssets(slug);
+      return sendJSON(result);
+    } catch (err) {
+      console.error('Error fetching media list:', err);
+      return sendJSON({ error: err.message }, 500);
+    }
+  }
+
+  if (method === 'GET' && url.pathname === '/api/media/unused') {
+    try {
+      const result = await getMediaAssets();
+      const unusedOnly = result.images.filter(img => img.isUnused);
+      return sendJSON({
+        images: unusedOnly,
+        totalCount: unusedOnly.length,
+        totalSize: unusedOnly.reduce((sum, img) => sum + img.size, 0)
+      });
+    } catch (err) {
+      console.error('Error fetching unused media:', err);
+      return sendJSON({ error: err.message }, 500);
+    }
+  }
+
+  if (method === 'POST' && url.pathname === '/api/media/delete') {
+    try {
+      const body = await getBody();
+      if (!body.url) {
+        return sendJSON({ error: 'URLが必要です' }, 400);
+      }
+      const result = await deleteMediaAsset(body.url);
+      return sendJSON(result);
+    } catch (err) {
+      console.error('Error deleting media:', err);
+      return sendJSON({ error: err.message }, 500);
     }
   }
 
