@@ -25,7 +25,8 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.5",
-    "playwright": "^1.63.0"
+    "playwright": "^1.63.0",
+    "wrangler": "^4.148.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
