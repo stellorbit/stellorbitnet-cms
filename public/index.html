@@ -2151,6 +2151,8 @@
       }
     }
 
+    let lastRenderedPostsJson = '';
+
     function renderPosts(posts) {
       const grid = document.getElementById('posts-grid');
       const totalEl = document.getElementById('stat-total');
@@ -2162,6 +2164,13 @@
         grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--danger); padding: 3rem;">データの形式が正しくありません</div>';
         return;
       }
+
+      // 差分チェック: 記事データに変更がなければDOMの破棄・再生成をスキップ（チラつき防止）
+      const currentPostsJson = JSON.stringify(posts);
+      if (currentPostsJson === lastRenderedPostsJson) {
+        return;
+      }
+      lastRenderedPostsJson = currentPostsJson;
 
       if (posts.length === 0) {
         grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 3rem; background: var(--bg-card); border: 1px dashed var(--border); border-radius: 8px;">' +
@@ -3619,14 +3628,14 @@
         await loadPosts();
         checkDevServerStatus();
 
-        setInterval(function() { 
-          loadPosts(true);
-          checkDevServerStatus();
-        }, 4000);
-
+        let lastFocusFetchTime = Date.now();
         window.addEventListener('focus', function() { 
-          loadPosts(true);
-          checkDevServerStatus();
+          // 前回の取得から60秒以上経過している場合のみバックグラウンド同期
+          if (Date.now() - lastFocusFetchTime > 60000) {
+            lastFocusFetchTime = Date.now();
+            loadPosts(true);
+            checkDevServerStatus();
+          }
         });
       }
     }
