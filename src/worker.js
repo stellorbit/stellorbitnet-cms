@@ -27,10 +27,11 @@ function errorResponse(message, status = 500, details = null) {
 async function callGitHub(path, env, options = {}) {
   const owner = env.GITHUB_OWNER || 'stellorbit';
   const repo = env.GITHUB_REPO || 'stellorbitnet-ver2';
-  const token = env.GITHUB_PAT;
+  const token = env.GITHUB_PAT || env.GITHUB_TOKEN || env.PAT || env.GITHUB_ACCESS_TOKEN;
 
   if (!token) {
-    throw new Error('GITHUB_PAT is not configured in Worker environment variables.');
+    const availableKeys = Object.keys(env).filter(k => k !== 'ASSETS');
+    throw new Error(`GITHUB_PAT is not configured in Worker environment variables. (Detected keys: [${availableKeys.join(', ')}])`);
   }
 
   const url = `https://api.github.com/repos/${owner}/${repo}${path}`;
@@ -141,10 +142,13 @@ export default {
 
     // 1. Health check & Diagnostics API
     if (url.pathname === '/api/health') {
+      const token = env.GITHUB_PAT || env.GITHUB_TOKEN || env.PAT || env.GITHUB_ACCESS_TOKEN;
+      const availableKeys = Object.keys(env).filter(k => k !== 'ASSETS');
       return jsonResponse({
         status: 'ok',
         mode: 'cloudflare-worker',
-        hasPat: Boolean(env.GITHUB_PAT),
+        hasPat: Boolean(token),
+        detectedVariables: availableKeys,
         owner: env.GITHUB_OWNER || 'stellorbit',
         repo: env.GITHUB_REPO || 'stellorbitnet-ver2',
         branch: env.GITHUB_BRANCH || 'main',
