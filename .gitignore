@@ -24,3 +24,4 @@ scripts/screenshots/
 .DS_Store
 Thumbs.db
 *.old
+.backups/
