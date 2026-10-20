@@ -2332,6 +2332,47 @@
             }
             inner.remove();
           });
+
+          // 3.1 見出しタグ内に誤って混入した <br> を検出し、段落（p）に自動分離
+          if (h.querySelector('br')) {
+            const lines = [];
+            let cur = [];
+            Array.from(h.childNodes).forEach(function(child) {
+              if (child.nodeType === 1 && child.tagName.toLowerCase() === 'br') {
+                lines.push(cur);
+                cur = [];
+              } else {
+                cur.push(child);
+              }
+            });
+            lines.push(cur);
+
+            const frag = doc.createDocumentFragment();
+            let firstHeadingUsed = false;
+            lines.forEach(function(lineNodes) {
+              const textContent = lineNodes.map(function(n) { return n.textContent || ''; }).join('').trim();
+              if (!textContent) {
+                const emptyP = doc.createElement('p');
+                emptyP.appendChild(doc.createElement('br'));
+                frag.appendChild(emptyP);
+                return;
+              }
+
+              if (!firstHeadingUsed) {
+                const newH = doc.createElement(h.tagName.toLowerCase());
+                if (h.hasAttribute('id')) newH.setAttribute('id', h.getAttribute('id'));
+                lineNodes.forEach(function(n) { newH.appendChild(n); });
+                frag.appendChild(newH);
+                firstHeadingUsed = true;
+              } else {
+                const p = doc.createElement('p');
+                lineNodes.forEach(function(n) { p.appendChild(n); });
+                frag.appendChild(p);
+              }
+            });
+
+            h.replaceWith(frag);
+          }
         });
 
         // 4. 重複したインライン装飾タグの解消
@@ -2642,40 +2683,112 @@
         blockNode = blockNode.parentNode;
       }
 
-      if (blockNode && blockNode !== canvas) {
+      if (!blockNode || blockNode === canvas) {
+        try {
+          document.execCommand('formatBlock', false, '<' + targetTag + '>');
+        } catch(e) {}
+        updateToolbarState();
+        return;
+      }
+
+      // blockNode 内に <br> が存在するか確認（複数行が1つのブロック内に混入しているケース）
+      const brElements = blockNode.querySelectorAll('br');
+
+      if (brElements.length === 0) {
+        // <br> がない単一行ブロックの場合
         const currentTag = blockNode.tagName.toLowerCase();
         if (currentTag === targetTag) {
-          // すでに同じタグならそのまま
           updateToolbarState();
           return;
         }
 
-        // 新しいブロック要素を作成して内容を移動
         const newElem = document.createElement(targetTag);
-        
-        // 既存のIDやclassを引き継ぎ
         if (blockNode.hasAttribute('id')) {
           newElem.setAttribute('id', blockNode.getAttribute('id'));
         }
-        
-        // 子ノードを移行
         while (blockNode.firstChild) {
           newElem.appendChild(blockNode.firstChild);
         }
-
         blockNode.replaceWith(newElem);
 
-        // 新要素にカーソルを移動
         const range = document.createRange();
         range.selectNodeContents(newElem);
         range.collapse(false);
         sel.removeAllRanges();
         sel.addRange(range);
-      } else {
-        // 見つからない場合は標準の execCommand を実行
-        try {
-          document.execCommand('formatBlock', false, '<' + targetTag + '>');
-        } catch(e) {}
+        updateToolbarState();
+        return;
+      }
+
+      // --- <br> を含む複数行ブロックの場合：カーソル行のみを分離して対象フォーマットを適用 ---
+      const lines = [];
+      let currentLineNodes = [];
+      Array.from(blockNode.childNodes).forEach(function(child) {
+        if (child.nodeType === 1 && child.tagName.toLowerCase() === 'br') {
+          lines.push(currentLineNodes);
+          currentLineNodes = [];
+        } else {
+          currentLineNodes.push(child);
+        }
+      });
+      lines.push(currentLineNodes);
+
+      // カーソル/選択範囲（anchorNode）が含まれる行インデックスを特定
+      let targetLineIndex = -1;
+      const anchor = sel.anchorNode;
+      for (let i = 0; i < lines.length; i++) {
+        for (let j = 0; j < lines[i].length; j++) {
+          const n = lines[i][j];
+          if (n === anchor || (n.contains && n.contains(anchor))) {
+            targetLineIndex = i;
+            break;
+          }
+        }
+        if (targetLineIndex !== -1) break;
+      }
+
+      if (targetLineIndex === -1) {
+        targetLineIndex = 0;
+      }
+
+      const frag = document.createDocumentFragment();
+      let targetElement = null;
+
+      // 元のブロックが見出しだった場合、対象行以外の行は通常の段落（p）に安全に変換
+      const isOriginalHeading = /^H[1-6]$/i.test(blockNode.tagName);
+      const defaultOtherTag = isOriginalHeading ? 'p' : (blockNode.tagName.toLowerCase() === 'blockquote' ? 'blockquote' : 'p');
+
+      lines.forEach(function(lineNodes, idx) {
+        const isTarget = (idx === targetLineIndex);
+        const tagToUse = isTarget ? targetTag : defaultOtherTag;
+        const elem = document.createElement(tagToUse);
+
+        if (isTarget && blockNode.hasAttribute('id')) {
+          elem.setAttribute('id', blockNode.getAttribute('id'));
+        }
+
+        if (lineNodes.length === 0) {
+          elem.appendChild(document.createElement('br'));
+        } else {
+          lineNodes.forEach(function(n) {
+            elem.appendChild(n);
+          });
+        }
+
+        frag.appendChild(elem);
+        if (isTarget) {
+          targetElement = elem;
+        }
+      });
+
+      blockNode.replaceWith(frag);
+
+      if (targetElement) {
+        const range = document.createRange();
+        range.selectNodeContents(targetElement);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
       }
 
       updateToolbarState();
@@ -3194,6 +3307,84 @@
           document.execCommand('insertHTML', false, cleaned);
           bindImageClickHandlers();
           return;
+        }
+
+        // 5. プレーンテキスト貼り付け時の段落（p）分割処理
+        // （ブラウザ既定の <br> 混入による見出し巻き込みバグを完全防止）
+        const rawPlain = clipboard.getData('text/plain');
+        if (rawPlain && rawPlain.includes('\n')) {
+          e.preventDefault();
+          const rawLines = rawPlain.split(/\r?\n/);
+          let html = '';
+          rawLines.forEach(function(line) {
+            const trimmed = line.trim();
+            if (trimmed) {
+              const escaped = trimmed
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+              html += '<p>' + escaped + '</p>';
+            } else {
+              html += '<p><br></p>';
+            }
+          });
+          if (html) {
+            document.execCommand('insertHTML', false, html);
+            bindImageClickHandlers();
+            return;
+          }
+        }
+      });
+
+      // 見出し内で Enter キーを押したときの自動段落（p）脱出処理 (IME変換中は除外)
+      canvasElem.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+          const sel = window.getSelection();
+          if (sel && sel.rangeCount) {
+            let node = sel.anchorNode;
+            let headingNode = null;
+            while (node && node !== canvasElem) {
+              if (node.nodeType === 1 && /^H[1-6]$/i.test(node.tagName)) {
+                headingNode = node;
+                break;
+              }
+              node = node.parentNode;
+            }
+
+            if (headingNode) {
+              e.preventDefault();
+              const range = sel.getRangeAt(0);
+
+              // カーソル以降のコンテンツを新しい p に抽出・移動
+              const afterRange = document.createRange();
+              afterRange.setStart(range.endContainer, range.endOffset);
+              afterRange.setEndAfter(headingNode.lastChild || headingNode);
+              const afterFrag = afterRange.extractContents();
+
+              const newP = document.createElement('p');
+              const hasContent = (afterFrag.textContent && afterFrag.textContent.length > 0) || afterFrag.querySelector('img, a, b, strong, i, em');
+              if (hasContent) {
+                newP.appendChild(afterFrag);
+              } else {
+                newP.appendChild(document.createElement('br'));
+              }
+
+              headingNode.parentNode.insertBefore(newP, headingNode.nextSibling);
+
+              if (!headingNode.textContent.trim() && !headingNode.querySelector('img')) {
+                headingNode.innerHTML = '<br>';
+              }
+
+              const newRange = document.createRange();
+              newRange.selectNodeContents(newP);
+              newRange.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(newRange);
+              updateToolbarState();
+              return;
+            }
+          }
         }
       });
     }
