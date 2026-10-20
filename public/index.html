@@ -2402,10 +2402,15 @@
           font.remove();
         });
 
-        // 2. はみ出しの原因となる絶対配置や巨大固定幅スタイル、固定背景色の除去
+        // 2. はみ出しの原因となる絶対配置や固定幅、フォントサイズ・書体汚染の完全除去
         const allElements = Array.from(body.querySelectorAll('*'));
         allElements.forEach(function(el) {
           if (el.style) {
+            // 見出し・段落のフォントサイズや書体の不揃い・縮小バグを完全防止
+            el.style.removeProperty('font-size');
+            el.style.removeProperty('font-family');
+            el.style.removeProperty('line-height');
+
             // 固定幅・最大幅をリセットしてコンテナ枠内に収容
             if (el.style.width && !el.style.width.endsWith('%')) {
               el.style.removeProperty('width');
@@ -2427,7 +2432,6 @@
             }
           }
         });
-
         // 3. 重複した見出しタグや不自然な入れ子の解消
         // 例: <h2><p>Text</p></h2> や <p><h2>Text</h2></p>
         const headings = Array.from(body.querySelectorAll('h1, h2, h3, h4, h5, h6'));
@@ -2770,7 +2774,40 @@
        ROBUST FORMATTING LOGIC & HEADINGS & LINKS
     ---------------------------------------------------- */
 
-    // 見出し・段落の安全な直接置換 (重複ネストやブラウザ差異を完全防止)
+    // 要素およびその子要素からフォントサイズ・書体・行高のインラインスタイルを完全除去
+    function stripFontStyles(elem) {
+      if (!elem) return;
+      if (elem.style) {
+        elem.style.removeProperty('font-size');
+        elem.style.removeProperty('font-family');
+        elem.style.removeProperty('line-height');
+        if (!elem.style.cssText || !elem.style.cssText.trim()) {
+          elem.removeAttribute('style');
+        }
+      }
+      if (elem.querySelectorAll) {
+        const descendants = elem.querySelectorAll('*');
+        descendants.forEach(function(d) {
+          if (d.tagName && d.tagName.toLowerCase() === 'font') {
+            while (d.firstChild) {
+              d.parentNode.insertBefore(d.firstChild, d);
+            }
+            d.remove();
+            return;
+          }
+          if (d.style) {
+            d.style.removeProperty('font-size');
+            d.style.removeProperty('font-family');
+            d.style.removeProperty('line-height');
+            if (!d.style.cssText || !d.style.cssText.trim()) {
+              d.removeAttribute('style');
+            }
+          }
+        });
+      }
+    }
+
+    // 見出し・段落の安全な直接置換 (重複ネスト・フォントサイズ不整合・複数行巻き込みを完全防止)
     function setBlockFormat(targetTag) {
       if (currentEditorMode !== 'visual') {
         alert('ビジュアルモードでお試しください');
@@ -2783,18 +2820,42 @@
       const sel = window.getSelection();
       if (!sel || !sel.rangeCount) return;
 
-      let blockNode = sel.anchorNode;
-      while (blockNode && blockNode !== canvas) {
-        if (blockNode.nodeType === 1 && /^(P|H1|H2|H3|H4|H5|H6|DIV|BLOCKQUOTE)$/i.test(blockNode.tagName)) {
+      // 1. カーソルが含まれる最寄りのブロック要素を特定
+      let anchor = sel.anchorNode;
+      let curr = anchor && anchor.nodeType === 3 ? anchor.parentNode : anchor;
+      let blockNode = null;
+
+      while (curr && curr !== canvas) {
+        if (curr.nodeType === 1 && /^(P|H1|H2|H3|H4|H5|H6|DIV|BLOCKQUOTE)$/i.test(curr.tagName)) {
+          blockNode = curr;
           break;
         }
-        blockNode = blockNode.parentNode;
+        curr = curr.parentNode;
       }
 
+      // blockNode が canvas 直下のテキストやインライン要素だった場合のフォールバック
       if (!blockNode || blockNode === canvas) {
+        const range = sel.getRangeAt(0);
+        const newElem = document.createElement(targetTag);
         try {
+          if (!range.collapsed) {
+            const contents = range.extractContents();
+            newElem.appendChild(contents);
+            stripFontStyles(newElem);
+            range.insertNode(newElem);
+          } else {
+            let textNode = anchor;
+            if (textNode && textNode.parentNode === canvas) {
+              newElem.textContent = textNode.textContent;
+              stripFontStyles(newElem);
+              canvas.replaceChild(newElem, textNode);
+            } else {
+              document.execCommand('formatBlock', false, '<' + targetTag + '>');
+            }
+          }
+        } catch(e) {
           document.execCommand('formatBlock', false, '<' + targetTag + '>');
-        } catch(e) {}
+        }
         updateToolbarState();
         return;
       }
@@ -2806,6 +2867,7 @@
         // <br> がない単一行ブロックの場合
         const currentTag = blockNode.tagName.toLowerCase();
         if (currentTag === targetTag) {
+          stripFontStyles(blockNode);
           updateToolbarState();
           return;
         }
@@ -2817,6 +2879,7 @@
         while (blockNode.firstChild) {
           newElem.appendChild(blockNode.firstChild);
         }
+        stripFontStyles(newElem);
         blockNode.replaceWith(newElem);
 
         const range = document.createRange();
@@ -2829,24 +2892,23 @@
       }
 
       // --- <br> を含む複数行ブロックの場合：カーソル行のみを分離して対象フォーマットを適用 ---
-      const lines = [];
+      const linesArr = [];
       let currentLineNodes = [];
       Array.from(blockNode.childNodes).forEach(function(child) {
         if (child.nodeType === 1 && child.tagName.toLowerCase() === 'br') {
-          lines.push(currentLineNodes);
+          linesArr.push(currentLineNodes);
           currentLineNodes = [];
         } else {
           currentLineNodes.push(child);
         }
       });
-      lines.push(currentLineNodes);
+      linesArr.push(currentLineNodes);
 
       // カーソル/選択範囲（anchorNode）が含まれる行インデックスを特定
       let targetLineIndex = -1;
-      const anchor = sel.anchorNode;
-      for (let i = 0; i < lines.length; i++) {
-        for (let j = 0; j < lines[i].length; j++) {
-          const n = lines[i][j];
+      for (let i = 0; i < linesArr.length; i++) {
+        for (let j = 0; j < linesArr[i].length; j++) {
+          const n = linesArr[i][j];
           if (n === anchor || (n.contains && n.contains(anchor))) {
             targetLineIndex = i;
             break;
@@ -2866,7 +2928,7 @@
       const isOriginalHeading = /^H[1-6]$/i.test(blockNode.tagName);
       const defaultOtherTag = isOriginalHeading ? 'p' : (blockNode.tagName.toLowerCase() === 'blockquote' ? 'blockquote' : 'p');
 
-      lines.forEach(function(lineNodes, idx) {
+      linesArr.forEach(function(lineNodes, idx) {
         const isTarget = (idx === targetLineIndex);
         const tagToUse = isTarget ? targetTag : defaultOtherTag;
         const elem = document.createElement(tagToUse);
@@ -2883,6 +2945,7 @@
           });
         }
 
+        stripFontStyles(elem);
         frag.appendChild(elem);
         if (isTarget) {
           targetElement = elem;
@@ -2901,7 +2964,6 @@
 
       updateToolbarState();
     }
-
     // 書式ボタンの安全な実行 (太字、斜体、下線等)
     function toggleFormat(cmd) {
       if (currentEditorMode !== 'visual') {
@@ -3284,55 +3346,189 @@
 
     async function handleArticleImageSelect(e) {
       const file = e.target.files[0];
-      const slug = activeEditorSlug || new URLSearchParams(window.location.search).get('editor') || new URLSearchParams(window.location.search).get('slug');
-      if (!file || !slug) return;
-      await uploadAndInsertArticleImage(file);
+      if (!file) return;
+      await processAndInsertArticleImage(file, 'select');
     }
 
-    // 画像のアップロード＆WebP変換＆カーソル位置への配置
-    async function uploadAndInsertArticleImage(file) {
+    // クライアント側で確実に高品質WebPへ変換 (最大幅1600px, quality 0.85)
+    function convertImageToWebP(fileOrBlob, maxWidth, quality) {
+      maxWidth = maxWidth || 1600;
+      quality = quality || 0.85;
+      return new Promise(function(resolve, reject) {
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(fileOrBlob);
+        img.onload = function() {
+          URL.revokeObjectURL(objectUrl);
+          let w = img.naturalWidth || img.width;
+          let h = img.naturalHeight || img.height;
+          if (w > maxWidth) {
+            h = Math.round((h * maxWidth) / w);
+            w = maxWidth;
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+
+          const webpDataUrl = canvas.toDataURL('image/webp', quality);
+          resolve({
+            dataUrl: webpDataUrl,
+            width: w,
+            height: h
+          });
+        };
+        img.onerror = function() {
+          URL.revokeObjectURL(objectUrl);
+          // 万一Canvas読み込みに失敗した場合はFileReaderでフォールバック
+          const reader = new FileReader();
+          reader.onload = function(evt) {
+            resolve({ dataUrl: evt.target.result, width: 0, height: 0 });
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(fileOrBlob);
+        };
+        img.src = objectUrl;
+      });
+    }
+
+    // 指定されたRangeまたは現在のキャレット位置にHTMLを確実に挿入するヘルパー
+    function insertHtmlAtCapturedRangeOrCanvas(html, savedRange) {
+      if (currentEditorMode === 'visual') {
+        const canvas = document.getElementById('wysiwyg-canvas');
+        canvas.focus();
+        const sel = window.getSelection();
+
+        let targetRange = savedRange;
+        if (!targetRange && sel && sel.rangeCount > 0) {
+          const r = sel.getRangeAt(0);
+          if (canvas.contains(r.commonAncestorContainer)) {
+            targetRange = r;
+          }
+        }
+
+        if (targetRange && canvas.contains(targetRange.commonAncestorContainer)) {
+          targetRange.deleteContents();
+          const temp = document.createElement('div');
+          temp.innerHTML = html;
+          const frag = document.createDocumentFragment();
+          let node, lastNode;
+          while ((node = temp.firstChild)) {
+            lastNode = frag.appendChild(node);
+          }
+          targetRange.insertNode(frag);
+          if (lastNode) {
+            targetRange.setStartAfter(lastNode);
+            targetRange.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(targetRange);
+          }
+        } else {
+          canvas.insertAdjacentHTML('beforeend', html);
+        }
+        bindImageClickHandlers();
+      } else {
+        const textarea = document.getElementById('source-textarea');
+        const start = textarea.selectionStart || textarea.value.length;
+        const end = textarea.selectionEnd || textarea.value.length;
+        textarea.value = textarea.value.slice(0, start) + '\n' + html + '\n' + textarea.value.slice(end);
+      }
+    }
+
+    // クリップボード、ドラッグ＆ドロップ、ファイル選択共通の画像処理＆WebP変換＆挿入パイプライン
+    async function processAndInsertArticleImage(file, sourceAction) {
+      if (!file) return;
+
       const slug = activeEditorSlug || new URLSearchParams(window.location.search).get('editor') || new URLSearchParams(window.location.search).get('slug');
-      if (!file || !slug) {
+      if (!slug) {
         showToast('⚠️ 記事が特定できないため画像を保存できません', '⚠️');
         return;
       }
 
-      showToast('⏳ 画像をWebPに変換・最適化中...', '🖼️');
-      const reader = new FileReader();
-      reader.onload = async function(evt) {
-        const base64Data = evt.target.result;
-        try {
-          const res = await fetch('/api/posts/upload-article-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              slug: slug,
-              imageBase64: base64Data,
-              filename: file.name || 'image.png'
-            })
-          });
-          const data = await res.json();
-          if (res.ok && data.success) {
-            showToast('✅ WebP画像を保存し配置しました！', '🖼️');
-
-            // ファイル名から安全なalt属性を生成（image.png 等の無意味な名前は空にする）
-            const cleanAlt = (file.name && !/^image(?:\.\w+)?$/i.test(file.name)) ? file.name.replace(/\.[^/.]+$/, '') : '';
-            
-            const figureHtml = '\n<figure class="article-image-figure">\n' +
-              '  <img src="' + escapeHtml(data.publicUrl) + '" alt="' + escapeHtml(cleanAlt) + '" />\n' +
-              '  <figcaption contenteditable="true" class="article-image-caption" data-placeholder="キャプションを入力（任意）"></figcaption>\n' +
-              '</figure>\n<p><br></p>\n';
-
-            insertHtmlAtCursor(figureHtml);
-            bindImageClickHandlers();
-          } else {
-            alert('画像のアップロードに失敗しました: ' + (data.error || '不明なエラー'));
-          }
-        } catch(err) {
-          alert('通信エラー: ' + err.message);
+      // 1. 現在のキャレット位置を即座にRangeとして保持
+      let savedRange = null;
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const r = sel.getRangeAt(0);
+        const canvas = document.getElementById('wysiwyg-canvas');
+        if (canvas && canvas.contains(r.commonAncestorContainer)) {
+          savedRange = r.cloneRange();
         }
-      };
-      reader.readAsDataURL(file);
+      }
+
+      showToast('⏳ 画像をWebPに変換・最適化中...', '🖼️');
+
+      // 2. ブラウザ側で即座にWebP変換
+      let converted = null;
+      try {
+        converted = await convertImageToWebP(file, 1600, 0.85);
+      } catch (err) {
+        console.error('WebP conversion failed:', err);
+      }
+
+      const previewDataUrl = converted ? converted.dataUrl : null;
+      if (!previewDataUrl) {
+        alert('画像の読み込み・変換に失敗しました');
+        return;
+      }
+
+      // 一意な一時IDを発行
+      const tempId = 'img-temp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+
+      // ファイル名からクリーンなalt属性を生成
+      const rawName = file.name || 'image';
+      const cleanAlt = (!/^image(?:\.\w+)?$/i.test(rawName))
+        ? rawName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_\u3000-\u30fe\u4e00-\u9fa5-]/g, ' ').trim()
+        : '';
+
+      // 3. エディタのキャレット位置に即時プレビュー配置 (アップロード中は透過度0.75で表示)
+      const figureHtml = '\n<figure class="article-image-figure" data-temp-id="' + tempId + '" style="opacity: 0.75; transition: opacity 0.3s ease;">\n' +
+        '  <img src="' + previewDataUrl + '" alt="' + escapeHtml(cleanAlt) + '" loading="lazy" />\n' +
+        '  <figcaption contenteditable="true" class="article-image-caption" data-placeholder="キャプションを入力（任意）"></figcaption>\n' +
+        '</figure>\n<p><br></p>\n';
+
+      insertHtmlAtCapturedRangeOrCanvas(figureHtml, savedRange);
+
+      // 4. バックグラウンドでAPIにWebP Base64をアップロード
+      try {
+        const safeFilename = cleanAlt ? (cleanAlt.toLowerCase().replace(/\s+/g, '-') + '.webp') : 'image.webp';
+        const res = await fetch('/api/posts/upload-article-image', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            slug: slug,
+            imageBase64: previewDataUrl,
+            filename: safeFilename
+          })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          // 正式URLに差し替え、透過度を100%に復帰
+          const tempFig = document.querySelector('figure[data-temp-id="' + tempId + '"]');
+          if (tempFig) {
+            const img = tempFig.querySelector('img');
+            if (img) img.src = data.publicUrl;
+            tempFig.style.opacity = '1';
+            tempFig.removeAttribute('data-temp-id');
+          }
+          showToast('✅ WebP画像を保存し配置しました！', '🖼️');
+        } else {
+          throw new Error(data.error || 'サーバー側での画像保存に失敗しました');
+        }
+      } catch (err) {
+        console.error('Image upload failed:', err);
+        const tempFig = document.querySelector('figure[data-temp-id="' + tempId + '"]');
+        if (tempFig) {
+          tempFig.style.outline = '2px dashed #e11d48';
+        }
+        alert('画像の保存に失敗しました: ' + err.message);
+      }
+    }
+
+    // 互換性のためのエイリアス
+    async function uploadAndInsertArticleImage(file) {
+      await processAndInsertArticleImage(file, 'direct');
     }
 
     // ドラッグ＆ドロップ画像アップロード
@@ -3353,8 +3549,8 @@
       const files = e.dataTransfer.files;
       if (files && files.length > 0) {
         for (let i = 0; i < files.length; i++) {
-          if (files[i].type.startsWith('image/')) {
-            await uploadAndInsertArticleImage(files[i]);
+          if (files[i].type && files[i].type.startsWith('image/')) {
+            await processAndInsertArticleImage(files[i], 'drop');
           }
         }
       }
@@ -3362,40 +3558,8 @@
 
     // 汎用HTML挿入ヘルパー (キャレット位置へ確実に挿入)
     function insertHtmlAtCursor(html) {
-      if (currentEditorMode === 'visual') {
-        const canvas = document.getElementById('wysiwyg-canvas');
-        canvas.focus();
-        const sel = window.getSelection();
-        if (sel && sel.rangeCount > 0) {
-          const range = sel.getRangeAt(0);
-          range.deleteContents();
-          
-          const temp = document.createElement('div');
-          temp.innerHTML = html;
-          const frag = document.createDocumentFragment();
-          let node, lastNode;
-          while ((node = temp.firstChild)) {
-            lastNode = frag.appendChild(node);
-          }
-          range.insertNode(frag);
-          if (lastNode) {
-            range.setStartAfter(lastNode);
-            range.collapse(true);
-            sel.removeAllRanges();
-            sel.addRange(range);
-          }
-        } else {
-          canvas.insertAdjacentHTML('beforeend', html);
-        }
-        bindImageClickHandlers();
-      } else {
-        const textarea = document.getElementById('source-textarea');
-        const start = textarea.selectionStart || textarea.value.length;
-        const end = textarea.selectionEnd || textarea.value.length;
-        textarea.value = textarea.value.slice(0, start) + '\n' + html + '\n' + textarea.value.slice(end);
-      }
+      insertHtmlAtCapturedRangeOrCanvas(html, null);
     }
-
     // Twitter widgets.js の動的レンダリング
     function renderTwitterWidgets() {
       if (window.twttr && window.twttr.widgets) {
@@ -3511,6 +3675,79 @@
       await insertUrlAsEmbed(url.trim());
     }
 
+    // 特殊コンテナ（コールアウト、引用、図表キャプション、表セル等）の検出
+    function getClosestSpecialContainer(node) {
+      const canvas = document.getElementById('wysiwyg-canvas');
+      while (node && node !== canvas) {
+        if (node.nodeType === 1) {
+          if (node.classList && node.classList.contains('callout-title')) {
+            return { type: 'callout-title', element: node };
+          }
+          if (node.classList && node.classList.contains('callout')) {
+            return { type: 'callout', element: node };
+          }
+          if (node.tagName === 'BLOCKQUOTE') {
+            return { type: 'blockquote', element: node };
+          }
+          if (node.tagName === 'FIGCAPTION') {
+            return { type: 'figcaption', element: node };
+          }
+          if (node.tagName === 'TD' || node.tagName === 'TH') {
+            return { type: 'table-cell', element: node };
+          }
+          if (node.tagName === 'LI') {
+            return { type: 'list-item', element: node };
+          }
+        }
+        node = node.parentNode;
+      }
+      return null;
+    }
+
+    // HTML内のブロック要素を <br> に平坦化し、特殊コンテナの分断・破壊を100%防止する
+    function flattenHtmlToInline(html) {
+      if (!html) return '';
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const body = doc.body;
+
+        // font タグ解除
+        const fontTags = Array.from(body.querySelectorAll('font'));
+        fontTags.forEach(function(f) {
+          while (f.firstChild) f.parentNode.insertBefore(f.firstChild, f);
+          f.remove();
+        });
+
+        // スタイル汚染除去
+        const all = Array.from(body.querySelectorAll('*'));
+        all.forEach(function(el) {
+          if (el.style) {
+            el.style.removeProperty('font-size');
+            el.style.removeProperty('font-family');
+            el.style.removeProperty('line-height');
+            if (!el.style.cssText || !el.style.cssText.trim()) el.removeAttribute('style');
+          }
+        });
+
+        // ブロック要素の末尾に <br> を補完してインライン展開
+        const blocks = Array.from(body.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6, li'));
+        blocks.forEach(function(b) {
+          if (b !== body.lastElementChild) {
+            b.appendChild(doc.createElement('br'));
+          }
+          while (b.firstChild) {
+            b.parentNode.insertBefore(b.firstChild, b);
+          }
+          b.remove();
+        });
+
+        return body.innerHTML;
+      } catch(e) {
+        return html.replace(/<[^>]+>/g, ' ');
+      }
+    }
+
     // クリップボードからの画像貼り付け・URL自動埋め込み＆サニタイズ (Ctrl+V)
     const canvasElem = document.getElementById('wysiwyg-canvas');
     if (canvasElem) {
@@ -3518,34 +3755,33 @@
         const clipboard = e.clipboardData || window.clipboardData;
         if (!clipboard) return;
 
-        // 1. クリップボード内に画像ファイルが存在するかチェック
+        // 1. クリップボード内の画像ファイル / Blob を検出（画像ペーストを最優先で確実にキャッチ）
+        let imageFile = null;
         if (clipboard.files && clipboard.files.length > 0) {
           for (let i = 0; i < clipboard.files.length; i++) {
-            const file = clipboard.files[i];
-            if (file.type.startsWith('image/')) {
-              e.preventDefault();
-              await uploadAndInsertArticleImage(file);
-              return;
+            if (clipboard.files[i].type && clipboard.files[i].type.startsWith('image/')) {
+              imageFile = clipboard.files[i];
+              break;
             }
           }
         }
-
-        // 2. クリップボードのアイテムから画像 Blob を検出
-        if (clipboard.items) {
+        if (!imageFile && clipboard.items) {
           for (let i = 0; i < clipboard.items.length; i++) {
             const item = clipboard.items[i];
-            if (item.type.indexOf('image') !== -1) {
-              const file = item.getAsFile();
-              if (file) {
-                e.preventDefault();
-                await uploadAndInsertArticleImage(file);
-                return;
-              }
+            if (item.type && item.type.indexOf('image') !== -1) {
+              imageFile = item.getAsFile();
+              if (imageFile) break;
             }
           }
         }
 
-        // 3. テキストが単一のURL（X, YouTube, Webサイト）であるかチェックして埋め込み形式へ自動変換
+        if (imageFile) {
+          e.preventDefault();
+          await processAndInsertArticleImage(imageFile, 'paste');
+          return;
+        }
+
+        // 2. テキストが単一のURL（X, YouTube, Webサイト）であるかチェックして埋め込み形式へ自動変換
         const textData = clipboard.getData('text/plain') ? clipboard.getData('text/plain').trim() : '';
         if (textData && /^https?:\/\/[^\s]+$/i.test(textData)) {
           e.preventDefault();
@@ -3553,7 +3789,47 @@
           if (embedded) return;
         }
 
-        // 4. HTML貼り付け時のサニタイズ（はみ出しスタイル・白抜き防止）
+        // 3. カーソルの祖先特殊コンテナ（callout, callout-title, blockquote等）を特定
+        const sel = window.getSelection();
+        const anchorNode = (sel && sel.rangeCount > 0) ? sel.anchorNode : null;
+        const containerInfo = getClosestSpecialContainer(anchorNode);
+
+        // --- ケース A: callout-title（ボックスの題名）内の場合 ---
+        if (containerInfo && containerInfo.type === 'callout-title') {
+          e.preventDefault();
+          // 改行を半角スペースに正規化し、親ブロックの分断を100%防止
+          const safeTitleText = (clipboard.getData('text/plain') || '').replace(/[\r\n]+/g, ' ').trim();
+          if (safeTitleText) {
+            document.execCommand('insertText', false, safeTitleText);
+          }
+          return;
+        }
+
+        // --- ケース B: callout（ボックス本文）または blockquote / figcaption / 表セル内の場合 ---
+        if (containerInfo && ['callout', 'blockquote', 'figcaption', 'table-cell'].includes(containerInfo.type)) {
+          e.preventDefault();
+          const htmlData = clipboard.getData('text/html');
+          if (htmlData) {
+            const inlined = flattenHtmlToInline(htmlData);
+            document.execCommand('insertHTML', false, inlined);
+            bindImageClickHandlers();
+            return;
+          }
+
+          const rawPlain = clipboard.getData('text/plain');
+          if (rawPlain) {
+            const rawLines = rawPlain.split(/\r?\n/);
+            const escapedLines = rawLines.map(function(line) {
+              return escapeHtml(line);
+            });
+            document.execCommand('insertHTML', false, escapedLines.join('<br>'));
+            return;
+          }
+          return;
+        }
+
+        // --- ケース C: 通常の本文エリア ---
+        // 4. HTML貼り付け時のサニタイズ（はみ出しスタイル・白抜き・フォントサイズ汚染防止）
         const htmlData = clipboard.getData('text/html');
         if (htmlData) {
           e.preventDefault();
@@ -3573,12 +3849,7 @@
           rawLines.forEach(function(line) {
             const trimmed = line.trim();
             if (trimmed) {
-              const escaped = trimmed
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
-              html += '<p>' + escaped + '</p>';
+              html += '<p>' + escapeHtml(trimmed) + '</p>';
             } else {
               html += '<p><br></p>';
             }
@@ -3590,7 +3861,6 @@
           }
         }
       });
-
       // 見出し内で Enter キーを押したときの自動段落（p）脱出処理 (IME変換中は除外)
       canvasElem.addEventListener('keydown', function(e) {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
