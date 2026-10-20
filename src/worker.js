@@ -167,10 +167,12 @@ async function commitMultipleFiles(files, commitMessage, env) {
 }
 
 // Single file PUT helper
-async function putGitHubFile(filePath, content, message, sha, env) {
+async function putGitHubFile(filePath, content, message, sha, env, isBase64 = false) {
   const branch = env.GITHUB_BRANCH || 'main';
   let base64Content = '';
-  if (typeof content === 'string') {
+  if (isBase64 && typeof content === 'string') {
+    base64Content = content;
+  } else if (typeof content === 'string') {
     const bytes = new TextEncoder().encode(content);
     let binary = '';
     for (let i = 0; i < bytes.length; i++) {
@@ -471,10 +473,28 @@ export default {
       try {
         const relativePath = decodeURIComponent(url.pathname.replace(/^\/images\/?/, ''));
         const filePath = `public/images/${relativePath}`;
-        const buffer = await getGitHubBinary(filePath, env);
+        let buffer = await getGitHubBinary(filePath, env);
         if (!buffer) {
           return new Response('Image Not Found', { status: 404, headers: CORS_HEADERS });
         }
+
+        // 二重Base64保存の自動検出＆復元フォールバック (破損画像の自己修復配信)
+        const checkBytes = new Uint8Array(buffer.slice(0, 32));
+        const checkStr = String.fromCharCode(...checkBytes);
+        if (/^(UklGR|iVBOR|\/9j\/|R0lGO)/.test(checkStr)) {
+          try {
+            const fullText = new TextDecoder().decode(buffer).trim();
+            const binaryStr = atob(fullText);
+            const recovered = new Uint8Array(binaryStr.length);
+            for (let i = 0; i < binaryStr.length; i++) {
+              recovered[i] = binaryStr.charCodeAt(i);
+            }
+            buffer = recovered.buffer;
+          } catch(e) {
+            console.error('Base64 decode fallback failed:', e);
+          }
+        }
+
         const ext = relativePath.split('.').pop().toLowerCase();
         const mimeTypes = {
           webp: 'image/webp',
@@ -825,7 +845,7 @@ export default {
               { path: pagePath, content: updatedPageContent, encoding: 'utf-8' },
             ], `cms: add thumbnail for ${body.slug}`, env);
           } else {
-            await putGitHubFile(filePath, rawBase64, `cms: upload thumbnail for ${body.slug}`, sha, env);
+            await putGitHubFile(filePath, rawBase64, `cms: upload thumbnail for ${body.slug}`, sha, env, true);
           }
 
           return jsonResponse({ success: true, filename });
@@ -843,7 +863,7 @@ export default {
           const filePath = `public/images/posts/${body.slug}/${finalFilename}`;
           const rawBase64 = body.imageBase64.replace(/^data:image\/\w+;base64,/, '');
 
-          await putGitHubFile(filePath, rawBase64, `cms: upload article image ${finalFilename}`, undefined, env);
+          await putGitHubFile(filePath, rawBase64, `cms: upload article image ${finalFilename}`, undefined, env, true);
           const publicUrl = `/images/posts/${body.slug}/${finalFilename}`;
           return jsonResponse({ success: true, filename: finalFilename, publicUrl });
         }
