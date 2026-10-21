@@ -772,6 +772,53 @@
       background-color: #eff6ff;
       color: var(--primary);
     }
+    .wysiwyg-canvas figure.is-selected img,
+    .wysiwyg-canvas img.is-selected {
+      outline: 3px solid #2563eb !important;
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.25) !important;
+    }
+    .figure-action-toolbar {
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      display: none;
+      gap: 6px;
+      background: rgba(15, 23, 42, 0.88);
+      backdrop-filter: blur(6px);
+      padding: 4px 8px;
+      border-radius: 8px;
+      z-index: 20;
+      user-select: none;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+    .wysiwyg-canvas figure:hover .figure-action-toolbar,
+    .wysiwyg-canvas figure.is-selected .figure-action-toolbar {
+      display: flex;
+    }
+    .fig-action-btn {
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #fff;
+      font-size: 0.78rem;
+      cursor: pointer;
+      padding: 3px 8px;
+      border-radius: 5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-weight: 500;
+      transition: all 0.15s ease;
+    }
+    .fig-action-btn:hover {
+      background: rgba(255, 255, 255, 0.28);
+    }
+    .fig-action-btn.fig-action-delete {
+      background: rgba(225, 29, 72, 0.85);
+      border-color: rgba(225, 29, 72, 1);
+    }
+    .fig-action-btn.fig-action-delete:hover {
+      background: #be123c;
+    }
     .wysiwyg-canvas figcaption:empty::before {
       content: attr(data-placeholder);
       color: #94a3b8;
@@ -1888,6 +1935,7 @@
         <button class="tb-text-btn" onclick="triggerEditorImageUpload()" title="新規画像をドラッグ＆ドロップまたはファイル選択してWebP即時配置">🖼️ 新規画像</button>
         <button class="tb-text-btn" id="tb-btn-media-picker" onclick="openMediaPickerModal()" title="既存のアップロード済み画像一覧から選択して本文に配置">🗃️ メディア選択</button>
         <button class="tb-text-btn" onclick="addCaptionToActiveImage()" title="選択中・または既存の画像にキャプションを追加/修正">💬 キャプション</button>
+        <button class="tb-text-btn" id="tb-btn-del-img" onclick="deleteActiveImage()" title="選択中の画像を削除 (または画像を選択して Delete / Backspace キー)">🗑️ 画像削除</button>
       </div>
 
       <!-- Main Editor Workspace (Canvas + TOC Sidebar) -->
@@ -2393,6 +2441,14 @@
         const doc = parser.parseFromString(html, 'text/html');
         const body = doc.body;
 
+        // エディタ専用の画像操作ツールバー・選択状態の除去
+        const toolbars = Array.from(body.querySelectorAll('.figure-action-toolbar'));
+        toolbars.forEach(function(tb) { tb.remove(); });
+        const selectedFigs = Array.from(body.querySelectorAll('.article-image-figure, figure, img'));
+        selectedFigs.forEach(function(el) {
+          el.classList.remove('is-selected');
+        });
+
         // 1. font タグを解除 (unwrap)
         const fontTags = Array.from(body.querySelectorAll('font'));
         fontTags.forEach(function(font) {
@@ -2628,17 +2684,149 @@
       }
     }
 
+    function clearSelectedImages() {
+      const canvas = document.getElementById('wysiwyg-canvas');
+      if (!canvas) return;
+      canvas.querySelectorAll('figure.is-selected, img.is-selected').forEach(function(el) {
+        el.classList.remove('is-selected');
+      });
+      activeImageNode = null;
+    }
+
+    function setupFigureInteractions(fig) {
+      // ツールバーがなければ注入
+      let tb = fig.querySelector('.figure-action-toolbar');
+      if (!tb) {
+        tb = document.createElement('div');
+        tb.className = 'figure-action-toolbar';
+        tb.setAttribute('contenteditable', 'false');
+        tb.innerHTML = '<button type="button" class="fig-action-btn fig-action-delete" title="この画像を削除 (Delete / Backspace)">🗑️ 削除</button>' +
+                       '<button type="button" class="fig-action-btn fig-action-caption" title="キャプションを追加/編集">💬 キャプション</button>';
+        fig.appendChild(tb);
+
+        const delBtn = tb.querySelector('.fig-action-delete');
+        if (delBtn) {
+          delBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            deleteImageElement(fig);
+          });
+        }
+
+        const capBtn = tb.querySelector('.fig-action-caption');
+        if (capBtn) {
+          capBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            activeImageNode = fig.querySelector('img');
+            addCaptionToActiveImage();
+          });
+        }
+      }
+
+      fig.onclick = function(e) {
+        if (e.target.closest('figcaption')) {
+          return;
+        }
+        e.stopPropagation();
+        clearSelectedImages();
+        fig.classList.add('is-selected');
+        activeImageNode = fig.querySelector('img') || fig;
+        showToast('🖼️ 画像を選択中 (「🗑️ 削除」ボタンまたは Delete/Backspace キーで消去できます)', 'ℹ️');
+      };
+    }
+
+    function setupOrphanImageInteractions(img) {
+      img.onclick = function(e) {
+        e.stopPropagation();
+        clearSelectedImages();
+        img.classList.add('is-selected');
+        activeImageNode = img;
+        showToast('🖼️ 画像を選択中 (「🗑️ 削除」ボタンまたは Delete/Backspace キーで消去できます)', 'ℹ️');
+      };
+    }
+
     function bindImageClickHandlers() {
       const canvas = document.getElementById('wysiwyg-canvas');
       if (!canvas) return;
-      const imgs = canvas.querySelectorAll('img');
-      imgs.forEach(function(img) {
-        img.onclick = function(e) {
-          e.stopPropagation();
-          activeImageNode = img;
-          showToast('🖼️ 画像を選択中（「💬 キャプション」ボタンで注釈を追加/編集できます）', 'ℹ️');
-        };
+
+      if (!canvas._hasImageDeselectHandler) {
+        canvas._hasImageDeselectHandler = true;
+        canvas.addEventListener('click', function(e) {
+          if (!e.target.closest('figure') && !e.target.closest('img')) {
+            clearSelectedImages();
+          }
+        });
+      }
+
+      const figures = canvas.querySelectorAll('figure');
+      figures.forEach(function(fig) {
+        setupFigureInteractions(fig);
       });
+
+      const orphanImgs = canvas.querySelectorAll('img:not(figure img)');
+      orphanImgs.forEach(function(img) {
+        setupOrphanImageInteractions(img);
+      });
+    }
+
+    function deleteActiveImage() {
+      const canvas = document.getElementById('wysiwyg-canvas');
+      if (!canvas) return;
+
+      let target = canvas.querySelector('figure.is-selected') || activeImageNode;
+
+      if (!target) {
+        const sel = window.getSelection();
+        if (sel && sel.anchorNode) {
+          let n = sel.anchorNode.nodeType === 3 ? sel.anchorNode.parentNode : sel.anchorNode;
+          if (n) {
+            if (n.tagName === 'IMG') target = n;
+            else if (n.closest('figure')) target = n.closest('figure');
+          } 
+        }
+      }
+
+      if (!target) {
+        alert('削除する画像が選択されていません。画像を1回クリックしてから「🗑️ 画像削除」ボタンを押してください。');
+        return;
+      }
+
+      const fig = target.closest('figure') || target;
+      deleteImageElement(fig);
+    }
+
+    function deleteImageElement(element) {
+      if (!element) return;
+      const canvas = document.getElementById('wysiwyg-canvas');
+      const prev = element.previousElementSibling;
+      const next = element.nextElementSibling;
+
+      element.remove();
+      activeImageNode = null;
+
+      // 削除後のカーソル位置を自然に復帰
+      if (prev && canvas && canvas.contains(prev)) {
+        const range = document.createRange();
+        range.selectNodeContents(prev);
+        range.collapse(false);
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      } else if (next && canvas && canvas.contains(next)) {
+        const range = document.createRange();
+        range.selectNodeContents(next);
+        range.collapse(true);
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+
+      showToast('🗑️ 画像を削除しました', '🗑️');
     }
 
     function addCaptionToActiveImage() {
@@ -2703,11 +2891,11 @@
           figure.appendChild(figcaption);
           imgTarget.alt = initialText;
 
+          setupFigureInteractions(figure);
           showToast('✅ キャプション付きで画像をグループ化しました！', '💬');
         }
       }
     }
-
     function getLatestContent() {
       if (currentEditorMode === 'visual') {
         return cleanArticleHtml(document.getElementById('wysiwyg-canvas').innerHTML);
@@ -3863,6 +4051,21 @@
       });
       // 見出し内で Enter キーを押したときの自動段落（p）脱出処理 (IME変換中は除外)
       canvasElem.addEventListener('keydown', function(e) {
+        // 画像選択中の Backspace / Delete キーによる即時削除
+        if ((e.key === 'Backspace' || e.key === 'Delete') && !e.isComposing) {
+          const selectedFig = canvasElem.querySelector('figure.is-selected');
+          if (selectedFig) {
+            e.preventDefault();
+            deleteImageElement(selectedFig);
+            return;
+          }
+          if (activeImageNode && canvasElem.contains(activeImageNode)) {
+            e.preventDefault();
+            deleteImageElement(activeImageNode.closest('figure') || activeImageNode);
+            return;
+          }
+        }
+
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
           const sel = window.getSelection();
           if (sel && sel.rangeCount) {
