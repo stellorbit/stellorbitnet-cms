@@ -819,6 +819,52 @@
     .fig-action-btn.fig-action-delete:hover {
       background: #be123c;
     }
+
+    /* CMS Nav Tabs */
+    .cms-nav-tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 0.5rem;
+    }
+    .nav-tab {
+      background: transparent;
+      border: none;
+      padding: 0.6rem 1.2rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-radius: 8px 8px 0 0;
+      transition: all 0.15s ease;
+      position: relative;
+    }
+    .nav-tab:hover {
+      color: var(--text);
+      background: rgba(0, 0, 0, 0.03);
+    }
+    .nav-tab.active {
+      color: var(--primary);
+      background: rgba(37, 99, 235, 0.08);
+    }
+    .nav-tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: -0.6rem;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--primary);
+    }
+    .page-controls-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
     .wysiwyg-canvas figcaption:empty::before {
       content: attr(data-placeholder);
       color: #94a3b8;
@@ -1727,31 +1773,51 @@
     </div>
   </header>
 
-  <main id="site-main">
-    <div class="stats-bar">
-      <div class="stat-card">
-        <span class="stat-label">総記事数</span>
-        <span class="stat-value" id="stat-total">0</span>
+    <main id="site-main">
+    <!-- Nav Tabs: 記事 vs 固定ページ -->
+    <div class="cms-nav-tabs">
+      <button class="nav-tab active" id="tab-articles" onclick="switchMainTab('articles')">📝 記事一覧 (<span id="tab-count-articles">0</span>)</button>
+      <button class="nav-tab" id="tab-pages" onclick="switchMainTab('pages')">📄 固定ページ一覧 (<span id="tab-count-pages">0</span>)</button>
+    </div>
+
+    <!-- Articles Section -->
+    <div id="articles-section">
+      <div class="stats-bar">
+        <div class="stat-card">
+          <span class="stat-label">総記事数</span>
+          <span class="stat-value" id="stat-total">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">公開中</span>
+          <span class="stat-value" id="stat-published" style="color: var(--success);">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">下書き</span>
+          <span class="stat-value" id="stat-draft" style="color: var(--warning);">0</span>
+        </div>
       </div>
-      <div class="stat-card">
-        <span class="stat-label">公開中</span>
-        <span class="stat-value" id="stat-published" style="color: var(--success);">0</span>
+
+      <div class="controls-bar">
+        <input type="text" class="search-input" id="search-input" placeholder="タイトルまたはslugで検索..." oninput="filterPosts()">
+        <div style="font-size: 0.875rem; color: var(--text-muted);" id="status-indicator">
+          🔴 Astro 開発サーバー未起動
+        </div>
       </div>
-      <div class="stat-card">
-        <span class="stat-label">下書き</span>
-        <span class="stat-value" id="stat-draft" style="color: var(--warning);">0</span>
+
+      <div class="posts-grid" id="posts-grid">
+        <!-- Dynamic posts -->
       </div>
     </div>
 
-    <div class="controls-bar">
-      <input type="text" class="search-input" id="search-input" placeholder="タイトルまたはslugで検索..." oninput="filterPosts()">
-      <div style="font-size: 0.875rem; color: var(--text-muted);" id="status-indicator">
-        🔴 Astro 開発サーバー未起動
+    <!-- Pages Section (固定ページ・各種ページ) -->
+    <div id="pages-section" style="display: none;">
+      <div class="page-controls-bar">
+        <input type="text" class="search-input" id="pages-search-input" placeholder="ページ名またはパスで検索..." oninput="filterPages()">
+        <button class="btn-primary" onclick="openNewPageModal()">＋ 新規ページ追加 🚀</button>
       </div>
-    </div>
-
-    <div class="posts-grid" id="posts-grid">
-      <!-- Dynamic posts -->
+      <div class="posts-grid" id="pages-grid">
+        <!-- Dynamic pages -->
+      </div>
     </div>
   </main>
 
@@ -1822,7 +1888,45 @@
     </div>
   </div>
 
-  <!-- Edit Meta Modal -->
+    <!-- Create Page Modal (固定ページ新規追加) -->
+  <div class="modal-overlay" id="create-page-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title">📄 新規固定ページを作成</h2>
+        <button class="btn-secondary btn-sm" onclick="closeNewPageModal()">✕</button>
+      </div>
+      <form id="create-page-form" onsubmit="submitNewPage(event)">
+        <div class="form-group">
+          <label class="form-label">ページタイトル <span style="color:var(--danger)">*</span></label>
+          <input type="text" class="form-control" id="new-page-title" required placeholder="例: 利用規約 / よくある質問" oninput="autoSuggestPageSlug()">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Slug (URLパス / 半角英数字とハイフン) <span style="color:var(--danger)">*</span></label>
+            <input type="text" class="form-control" id="new-page-slug" required pattern="^[a-z0-9]+(?:-[a-z0-9]+)*$" placeholder="terms">
+            <div class="slug-hint">https://stellorbit.net/&lt;slug&gt; に配置されます</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">英語サブタイトル (eyebrow, 任意)</label>
+            <input type="text" class="form-control" id="new-page-eyebrow" placeholder="Terms of Service">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">説明文 (description)</label>
+          <textarea class="form-control" id="new-page-desc" rows="3" placeholder="ページの概要・メタディスクリプションを入力..."></textarea>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
+          <button type="button" class="btn-secondary" onclick="closeNewPageModal()">キャンセル</button>
+          <button type="submit" class="btn-primary" id="btn-submit-new-page">ページを作成して編集を開く 🚀</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<!-- Edit Meta Modal -->
   <div class="modal-overlay" id="edit-modal">
     <div class="modal">
       <div class="modal-header">
@@ -2905,7 +3009,264 @@
     }
 
     // Save Article Content & Title Simultaneously
-    async function saveArticleContent() {
+        // --- 固定ページ（各種ページ）管理ロジック ---
+    let allPages = [];
+    let activeEditorType = 'article'; // 'article' or 'page'
+    let activePageEditMode = 'prose'; // 'prose' or 'full'
+
+    function switchMainTab(tab) {
+      const articlesSec = document.getElementById('articles-section');
+      const pagesSec = document.getElementById('pages-section');
+      const tabArticles = document.getElementById('tab-articles');
+      const tabPages = document.getElementById('tab-pages');
+
+      if (tab === 'articles') {
+        articlesSec.style.display = 'block';
+        pagesSec.style.display = 'none';
+        tabArticles.classList.add('active');
+        tabPages.classList.remove('active');
+      } else {
+        articlesSec.style.display = 'none';
+        pagesSec.style.display = 'block';
+        tabArticles.classList.remove('active');
+        tabPages.classList.add('active');
+        loadPages();
+      }
+    }
+
+    async function loadPages() {
+      try {
+        const res = await fetch('/api/pages');
+        const data = await res.json();
+        if (res.ok && data.success) {
+          allPages = data.pages || [];
+          renderPages(allPages);
+          const countEl = document.getElementById('tab-count-pages');
+          if (countEl) countEl.textContent = allPages.length;
+        }
+      } catch(err) {
+        console.error('Failed to load pages:', err);
+      }
+    }
+
+    function filterPages() {
+      const q = (document.getElementById('pages-search-input').value || '').trim().toLowerCase();
+      if (!q) {
+        renderPages(allPages);
+        return;
+      }
+      const filtered = allPages.filter(p => 
+        (p.title && p.title.toLowerCase().includes(q)) ||
+        (p.slug && p.slug.toLowerCase().includes(q)) ||
+        (p.path && p.path.toLowerCase().includes(q))
+      );
+      renderPages(filtered);
+    }
+
+    function renderPages(pages) {
+      const grid = document.getElementById('pages-grid');
+      if (!grid) return;
+      if (!pages || pages.length === 0) {
+        grid.innerHTML = '<div style="padding: 3rem; text-align: center; color: var(--text-muted); grid-column: 1/-1;">該当する固定ページが見つかりません。</div>';
+        return;
+      }
+
+      let html = '';
+      pages.forEach(function(p) {
+        const isRedirectBadge = p.isRedirect ? '<span class="post-badge" style="background:#e0e7ff; color:#3730a3;">301転送</span>' : '';
+        const modeBadge = p.hasProse ? '<span class="post-badge" style="background:#dcfce7; color:#166534;">WYSIWYG対応</span>' : '<span class="post-badge" style="background:#f1f5f9; color:#475569;">Astroソース</span>';
+
+        html += '<div class="post-card">' +
+          '<div class="post-card-body">' +
+            '<div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem; flex-wrap: wrap;">' +
+              isRedirectBadge + modeBadge +
+            '</div>' +
+            '<h3 class="post-card-title">' + escapeHtml(p.title) + '</h3>' +
+            (p.eyebrow ? '<div style="font-size: 0.8rem; color: var(--primary); margin-bottom: 0.4rem; font-weight: 500;">' + escapeHtml(p.eyebrow) + '</div>' : '') +
+            '<p class="post-card-desc">' + escapeHtml(p.description || '説明文なし') + '</p>' +
+            '<div class="post-card-meta" style="margin-top: 0.75rem; font-family: monospace; font-size: 0.8rem; color: var(--text-muted); background: rgba(0,0,0,0.02); padding: 0.4rem 0.6rem; border-radius: 4px;">' +
+              '📁 ' + escapeHtml(p.path) + '<br>' +
+              '🔗 <a href="https://stellorbit.net' + escapeHtml(p.url) + '" target="_blank" style="color: var(--primary); text-decoration: underline;">https://stellorbit.net' + escapeHtml(p.url) + '</a>' +
+            '</div>' +
+          '</div>' +
+          '<div class="post-card-footer" style="display: flex; gap: 0.5rem; justify-content: flex-end; padding: 0.75rem 1rem; border-top: 1px solid var(--border); background: var(--bg);">' +
+            '<button class="btn-secondary btn-sm" onclick="openPageInLiveSite(\'' + escapeHtml(p.url) + '\')">🌐 表示</button>' +
+            '<button class="btn-primary btn-sm" onclick="openPageEditorWindow(\'' + escapeHtml(p.slug) + '\')">✏️ 編集</button>' +
+          '</div>' +
+        '</div>';
+      });
+      grid.innerHTML = html;
+    }
+
+    function openPageInLiveSite(url) {
+      window.open('https://stellorbit.net' + url, '_blank');
+    }
+
+    function openNewPageModal() {
+      document.getElementById('create-page-form').reset();
+      document.getElementById('create-page-modal').classList.add('active');
+      document.getElementById('new-page-title').focus();
+    }
+
+    function closeNewPageModal() {
+      document.getElementById('create-page-modal').classList.remove('active');
+    }
+
+    function autoSuggestPageSlug() {
+      const title = document.getElementById('new-page-title').value;
+      const slugInput = document.getElementById('new-page-slug');
+      if (!slugInput.dataset.manual) {
+        const clean = title.toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, '')
+          .trim()
+          .replace(/\s+/g, '-');
+        if (clean) slugInput.value = clean;
+      }
+    }
+
+    async function submitNewPage(e) {
+      if (e) e.preventDefault();
+      const slug = document.getElementById('new-page-slug').value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+      const title = document.getElementById('new-page-title').value.trim();
+      const eyebrow = document.getElementById('new-page-eyebrow').value.trim();
+      const description = document.getElementById('new-page-desc').value.trim();
+
+      if (!slug || !title) {
+        alert('スラッグとタイトルは必須です');
+        return;
+      }
+
+      const submitBtn = document.getElementById('btn-submit-new-page');
+      submitBtn.disabled = true;
+      submitBtn.textContent = '作成中...';
+
+      try {
+        const res = await fetch('/api/pages/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug, title, eyebrow, description })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          closeNewPageModal();
+          showToast('✅ 新規ページを作成しました！', '📄');
+          await loadPages();
+          openPageEditorWindow(slug);
+        } else {
+          alert('ページ作成失敗: ' + (data.error || '不明なエラー'));
+        }
+      } catch(err) {
+        alert('通信エラー: ' + err.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'ページを作成して編集を開く 🚀';
+      }
+    }
+
+    function openPageEditorWindow(slug) {
+      const url = '/?page=' + encodeURIComponent(slug);
+      const winName = 'cms_page_' + String(slug).replace(/[^a-zA-Z0-9_]/g, '_');
+      const width = Math.min(1380, Math.floor(window.screen.availWidth * 0.94));
+      const height = Math.min(940, Math.floor(window.screen.availHeight * 0.94));
+      const left = Math.max(0, Math.floor((window.screen.availWidth - width) / 2));
+      const top = Math.max(0, Math.floor((window.screen.availHeight - height) / 2));
+      const features = 'width=' + width + ',height=' + height + ',left=' + left + ',top=' + top + ',menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes';
+
+      const popup = window.open(url, winName, features);
+      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+        loadPageContentIntoEditor(slug);
+      } else {
+        popup.focus();
+      }
+    }
+
+    async function loadPageContentIntoEditor(slug) {
+      activeEditorType = 'page';
+      activeEditorSlug = slug;
+      const modal = document.getElementById('editor-modal');
+      if (modal) modal.classList.add('active');
+
+      const titleInput = document.getElementById('editor-title-input');
+      const canvas = document.getElementById('wysiwyg-canvas');
+      const textarea = document.getElementById('source-textarea');
+
+      titleInput.value = slug;
+      canvas.innerHTML = '<p>読み込み中...</p>';
+      textarea.value = '';
+
+      try {
+        const res = await fetch('/api/pages/content?slug=' + encodeURIComponent(slug));
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const pageTitle = (data.meta && data.meta.title) ? data.meta.title : slug;
+          titleInput.value = pageTitle;
+          document.title = '📄 ページ編集: ' + pageTitle;
+
+          if (data.hasProse && data.proseContent) {
+            activePageEditMode = 'prose';
+            canvas.innerHTML = cleanArticleHtml(data.proseContent);
+            textarea.value = cleanArticleHtml(data.proseContent);
+            setEditorMode('visual');
+          } else {
+            activePageEditMode = 'full';
+            canvas.innerHTML = cleanArticleHtml(data.fullContent);
+            textarea.value = data.fullContent;
+            setEditorMode('source');
+          }
+
+          bindImageClickHandlers();
+          updateTocInspector();
+        } else {
+          alert('ページ読み込みエラー: ' + (data.error || '不明なエラー'));
+        }
+      } catch(err) {
+        alert('通信エラー: ' + err.message);
+      }
+    }
+
+    async function savePageContent() {
+      if (!activeEditorSlug) return;
+      const btn = document.getElementById('btn-save-article');
+      btn.disabled = true;
+      btn.textContent = '⏳ 保存中...';
+
+      const content = getLatestContent();
+      const newTitle = document.getElementById('editor-title-input').value.trim();
+
+      try {
+        const res = await fetch('/api/pages/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            slug: activeEditorSlug,
+            content: content,
+            mode: activePageEditMode || 'prose',
+            title: newTitle
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          showToast('✅ 固定ページを保存・コミットしました！', '💾');
+          await loadPages();
+          if (window.opener && !window.opener.closed && window.opener.loadPages) {
+            window.opener.loadPages();
+          }
+        } else {
+          alert('ページ保存失敗: ' + (data.error || '不明なエラー'));
+        }
+      } catch(err) {
+        alert('通信エラー: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '💾 保存 (Ctrl+S)';
+      }
+    }
+
+async function saveArticleContent() {
+      if (activeEditorType === 'page') {
+        await savePageContent();
+        return;
+      }
       if (!activeEditorSlug) return;
       const btn = document.getElementById('btn-save-article');
       btn.disabled = true;
@@ -4536,8 +4897,14 @@
     async function initCMS() {
       const urlParams = new URLSearchParams(window.location.search);
       const editorSlug = urlParams.get('editor') || urlParams.get('slug');
+      const pageSlug = urlParams.get('page');
 
-      if (editorSlug || window.location.pathname === '/editor') {
+      if (pageSlug) {
+        isStandaloneMode = true;
+        document.body.classList.add('is-standalone-editor');
+        await loadPages();
+        loadPageContentIntoEditor(pageSlug);
+      } else if (editorSlug || window.location.pathname === '/editor') {
         isStandaloneMode = true;
         document.body.classList.add('is-standalone-editor');
         const targetSlug = editorSlug || urlParams.get('slug');
@@ -4547,6 +4914,7 @@
         }
       } else {
         await loadPosts();
+        loadPages();
         checkDevServerStatus();
 
         let lastFocusFetchTime = Date.now();

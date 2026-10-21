@@ -413,6 +413,88 @@ async function fetchOgpData(rawUrl) {
   };
 }
 
+
+// --- Astro Page Meta Parser & Updater for Worker ---
+function parseAstroPageMeta(filename, fileContent) {
+  const slug = filename.replace(/\.astro$/, '');
+  let title = '';
+  let description = '';
+  let eyebrow = '';
+  let isRedirect = false;
+
+  // 1. frontmatter
+  const fmMatch = fileContent.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (fmMatch) {
+    const fm = fmMatch[1];
+    const titleMatch = fm.match(/title\s*[:=]\s*['"`](.*?)['"`]/);
+    if (titleMatch) title = titleMatch[1];
+    const descMatch = fm.match(/description\s*[:=]\s*['"`](.*?)['"`]/);
+    if (descMatch) description = descMatch[1];
+    const eyebrowMatch = fm.match(/eyebrow\s*[:=]\s*['"`](.*?)['"`]/);
+    if (eyebrowMatch) eyebrow = eyebrowMatch[1];
+    if (fm.includes('return Astro.redirect(') || fm.includes('Astro.redirect(')) isRedirect = true;
+  }
+
+  // 2. BaseLayout props
+  if (!title) {
+    const blTitleMatch = fileContent.match(/<BaseLayout[^>]*\btitle=["']([^"']*)["']/i);
+    if (blTitleMatch) title = blTitleMatch[1];
+  }
+  if (!description) {
+    const blDescMatch = fileContent.match(/<BaseLayout[^>]*\bdescription=["']([^"']*)["']/i);
+    if (blDescMatch) description = blDescMatch[1];
+  }
+
+  // 3. Fallbacks from HTML body
+  if (!eyebrow) {
+    const ebMatch = fileContent.match(/<p[^>]*class=["'][^"']*eyebrow[^"']*["'][^>]*>([\s\S]*?)<\/p>/i);
+    if (ebMatch) eyebrow = ebMatch[1].replace(/<[^>]+>/g, '').trim();
+  }
+  if (!title) {
+    const h1Match = fileContent.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+    if (h1Match) title = h1Match[1].replace(/<[^>]+>/g, '').trim();
+  }
+  if (!description) {
+    const leadMatch = fileContent.match(/<p[^>]*class=["'][^"']*page-lead[^"']*["'][^>]*>([\s\S]*?)<\/p>/i);
+    if (leadMatch) description = leadMatch[1].replace(/<[^>]+>/g, '').trim();
+  }
+
+  const hasProse = /<div[^>]*class=["'][^"']*prose[^"']*["'][^>]*>/i.test(fileContent);
+
+  if (!title) title = slug;
+
+  return {
+    slug,
+    filename,
+    title,
+    eyebrow,
+    description,
+    path: `src/pages/${filename}`,
+    url: slug === 'index' ? '/' : `/${slug}`,
+    isRedirect,
+    hasProse
+  };
+}
+
+function updateAstroPageTitle(raw, newTitle) {
+  let updated = raw;
+  if (/<BaseLayout[^>]*\btitle=["'][^"']*["']/i.test(updated)) {
+    updated = updated.replace(/(<BaseLayout[^>]*\btitle=["'])([^"']*)(["'])/i, `$1${newTitle}$3`);
+  }
+  const fmMatch = updated.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (fmMatch) {
+    let fm = fmMatch[1];
+    if (/(title\s*[:=]\s*['"`])(.*)(['"`])/.test(fm)) {
+      fm = fm.replace(/(title\s*[:=]\s*['"`])(.*)(['"`])/, `$1${newTitle}$3`);
+      updated = updated.replace(/^---\r?\n([\s\S]*?)\r?\n---/, `---\n${fm}\n---`);
+    }
+  }
+  if (/<h1[^>]*>([\s\S]*?)<\/h1>/i.test(updated)) {
+    updated = updated.replace(/(<h1[^>]*>)([\s\S]*?)(<\/h1>)/i, `$1${newTitle}$3`);
+  }
+  return updated;
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') {
@@ -534,6 +616,167 @@ export default {
     if (url.pathname.startsWith('/api/')) {
       try {
         // Fetch Post Metadata
+        
+      // Pages List API
+      if (url.pathname === '/api/pages' && request.method === 'GET') {
+        try {
+          const branch = env.GITHUB_BRANCH || 'main';
+          const treeRes = await callGitHub(`/git/trees/${branch}?recursive=1`, env);
+          if (!treeRes.ok) {
+            return errorResponse('Failed to fetch repository tree', 500);
+          }
+          const treeData = await treeRes.json();
+          const pageFiles = (treeData.tree || []).filter(item => 
+            item.type === 'blob' && 
+            item.path.startsWith('src/pages/') && 
+            item.path.endsWith('.astro')
+          );
+
+          const pages = [];
+          for (const item of pageFiles) {
+            const filename = item.path.replace('src/pages/', '');
+            if (filename.includes('/')) continue;
+            try {
+              const fileData = await getGitHubFile(item.path, env);
+              if (fileData && fileData.content) {
+                const meta = parseAstroPageMeta(filename, fileData.content);
+                pages.push(meta);
+              }
+            } catch (fileErr) {
+              console.error('Error fetching page file:', item.path, fileErr);
+            }
+          }
+
+          return jsonResponse({ success: true, pages });
+        } catch (err) {
+          console.error('Error in GET /api/pages:', err);
+          return errorResponse(err.message, 500);
+        }
+      }
+
+      // Page Content API
+      if (url.pathname === '/api/pages/content' && request.method === 'GET') {
+        try {
+          const slug = url.searchParams.get('slug');
+          if (!slug) return errorResponse('Missing slug', 400);
+
+          const cleanSlug = slug.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+          const filePath = `src/pages/${cleanSlug}.astro`;
+          const fileData = await getGitHubFile(filePath, env);
+          if (!fileData) {
+            return errorResponse('Page not found', 404);
+          }
+
+          const meta = parseAstroPageMeta(`${cleanSlug}.astro`, fileData.content);
+
+          let proseContent = '';
+          const proseMatch = fileData.content.match(/<div[^>]*class=["'][^"']*prose[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
+          if (proseMatch) {
+            proseContent = proseMatch[1].trim();
+          }
+
+          return jsonResponse({
+            success: true,
+            slug: cleanSlug,
+            sha: fileData.sha,
+            meta,
+            fullContent: fileData.content,
+            proseContent,
+            hasProse: Boolean(proseMatch)
+          });
+        } catch (err) {
+          console.error('Error in GET /api/pages/content:', err);
+          return errorResponse(err.message, 500);
+        }
+      }
+
+      // Page Save API
+      if (url.pathname === '/api/pages/save' && request.method === 'POST') {
+        try {
+          const body = await request.json();
+          if (!body.slug || body.content === undefined) {
+            return errorResponse('Missing slug or content', 400);
+          }
+
+          const cleanSlug = body.slug.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+          const filePath = `src/pages/${cleanSlug}.astro`;
+          const fileData = await getGitHubFile(filePath, env);
+          if (!fileData) {
+            return errorResponse('Page not found on GitHub', 404);
+          }
+
+          let finalContent = body.content;
+          if (body.mode === 'prose') {
+            finalContent = fileData.content.replace(
+              /(<div[^>]*class=["'][^"']*prose[^"']*["'][^>]*>)[\s\S]*?(<\/div>)/i,
+              `$1\n${body.content}\n$2`
+            );
+          }
+
+          if (body.title) {
+            finalContent = updateAstroPageTitle(finalContent, body.title);
+          }
+
+          const commitMsg = `docs(page): update ${cleanSlug}.astro content via CMS`;
+          await putGitHubFile(filePath, finalContent, commitMsg, fileData.sha, env);
+
+          return jsonResponse({ success: true, message: 'Page saved successfully' });
+        } catch (err) {
+          console.error('Error in POST /api/pages/save:', err);
+          return errorResponse(err.message, 500);
+        }
+      }
+
+      // Page Create API
+      if (url.pathname === '/api/pages/create' && request.method === 'POST') {
+        try {
+          const body = await request.json();
+          if (!body.slug || !body.title) {
+            return errorResponse('Slug and title are required', 400);
+          }
+
+          const cleanSlug = body.slug.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+          const filePath = `src/pages/${cleanSlug}.astro`;
+
+          const existing = await getGitHubFile(filePath, env);
+          if (existing) {
+            return errorResponse('Page with this slug already exists', 400);
+          }
+
+          const eyebrow = body.eyebrow || body.title;
+          const description = body.description || '';
+
+          const template = `---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="${body.title}" description="${description}">
+<div class="shell">
+<section class="content-panel">
+<div class="page-heading">
+<p class="eyebrow">${eyebrow}</p>
+<h1>${body.title}</h1>
+<p class="page-lead">${description}</p>
+</div>
+
+<div class="prose">
+<p>ここにページの本文を入力してください。</p>
+</div>
+</section>
+</div>
+</BaseLayout>
+`;
+
+          const commitMsg = `feat(page): create new page ${cleanSlug}.astro via CMS`;
+          await putGitHubFile(filePath, template, commitMsg, null, env);
+
+          return jsonResponse({ success: true, slug: cleanSlug });
+        } catch (err) {
+          console.error('Error in POST /api/pages/create:', err);
+          return errorResponse(err.message, 500);
+        }
+      }
+
         if (url.pathname === '/api/posts' && request.method === 'GET') {
           const candidatePaths = [
             'src/content/astro-posts.ts',

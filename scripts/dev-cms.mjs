@@ -561,6 +561,88 @@ async function deleteMediaAsset(relativeUrl) {
   return { success: true, deletedPath: relativeUrl };
 }
 
+
+// --- Astro Page Meta Parser & Updater ---
+function parseAstroPageMeta(filename, fileContent) {
+  const slug = filename.replace(/\.astro$/, '');
+  let title = '';
+  let description = '';
+  let eyebrow = '';
+  let isRedirect = false;
+
+  // 1. frontmatter
+  const fmMatch = fileContent.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (fmMatch) {
+    const fm = fmMatch[1];
+    const titleMatch = fm.match(/title\s*[:=]\s*['"`](.*?)['"`]/);
+    if (titleMatch) title = titleMatch[1];
+    const descMatch = fm.match(/description\s*[:=]\s*['"`](.*?)['"`]/);
+    if (descMatch) description = descMatch[1];
+    const eyebrowMatch = fm.match(/eyebrow\s*[:=]\s*['"`](.*?)['"`]/);
+    if (eyebrowMatch) eyebrow = eyebrowMatch[1];
+    if (fm.includes('return Astro.redirect(') || fm.includes('Astro.redirect(')) isRedirect = true;
+  }
+
+  // 2. BaseLayout props
+  if (!title) {
+    const blTitleMatch = fileContent.match(/<BaseLayout[^>]*\btitle=["']([^"']*)["']/i);
+    if (blTitleMatch) title = blTitleMatch[1];
+  }
+  if (!description) {
+    const blDescMatch = fileContent.match(/<BaseLayout[^>]*\bdescription=["']([^"']*)["']/i);
+    if (blDescMatch) description = blDescMatch[1];
+  }
+
+  // 3. Fallbacks from HTML body
+  if (!eyebrow) {
+    const ebMatch = fileContent.match(/<p[^>]*class=["'][^"']*eyebrow[^"']*["'][^>]*>([\s\S]*?)<\/p>/i);
+    if (ebMatch) eyebrow = ebMatch[1].replace(/<[^>]+>/g, '').trim();
+  }
+  if (!title) {
+    const h1Match = fileContent.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+    if (h1Match) title = h1Match[1].replace(/<[^>]+>/g, '').trim();
+  }
+  if (!description) {
+    const leadMatch = fileContent.match(/<p[^>]*class=["'][^"']*page-lead[^"']*["'][^>]*>([\s\S]*?)<\/p>/i);
+    if (leadMatch) description = leadMatch[1].replace(/<[^>]+>/g, '').trim();
+  }
+
+  const hasProse = /<div[^>]*class=["'][^"']*prose[^"']*["'][^>]*>/i.test(fileContent);
+
+  if (!title) title = slug;
+
+  return {
+    slug,
+    filename,
+    title,
+    eyebrow,
+    description,
+    path: `src/pages/${filename}`,
+    url: slug === 'index' ? '/' : `/${slug}`,
+    isRedirect,
+    hasProse
+  };
+}
+
+function updateAstroPageTitle(raw, newTitle) {
+  let updated = raw;
+  if (/<BaseLayout[^>]*\btitle=["'][^"']*["']/i.test(updated)) {
+    updated = updated.replace(/(<BaseLayout[^>]*\btitle=["'])([^"']*)(["'])/i, `$1${newTitle}$3`);
+  }
+  const fmMatch = updated.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (fmMatch) {
+    let fm = fmMatch[1];
+    if (/(title\s*[:=]\s*['"`])(.*)(['"`])/.test(fm)) {
+      fm = fm.replace(/(title\s*[:=]\s*['"`])(.*)(['"`])/, `$1${newTitle}$3`);
+      updated = updated.replace(/^---\r?\n([\s\S]*?)\r?\n---/, `---\n${fm}\n---`);
+    }
+  }
+  if (/<h1[^>]*>([\s\S]*?)<\/h1>/i.test(updated)) {
+    updated = updated.replace(/(<h1[^>]*>)([\s\S]*?)(<\/h1>)/i, `$1${newTitle}$3`);
+  }
+  return updated;
+}
+
 // Request Handler
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -745,6 +827,162 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(result);
     } catch (err) {
       console.error('Error deleting media:', err);
+      return sendJSON({ error: err.message }, 500);
+    }
+  }
+
+  
+  // Pages List API
+  if (method === 'GET' && url.pathname === '/api/pages') {
+    try {
+      const pagesDir = path.join(siteRoot, 'src', 'pages');
+      let files = [];
+      try {
+        files = await fs.readdir(pagesDir);
+      } catch (e) {
+        return sendJSON({ success: true, pages: [] });
+      }
+
+      const pages = [];
+      for (const f of files) {
+        if (!f.endsWith('.astro')) continue;
+        const fullPath = path.join(pagesDir, f);
+        const stat = await fs.stat(fullPath);
+        if (stat.isDirectory()) continue;
+        const fileContent = await fs.readFile(fullPath, 'utf-8');
+        const meta = parseAstroPageMeta(f, fileContent);
+        pages.push(meta);
+      }
+      return sendJSON({ success: true, pages });
+    } catch (err) {
+      console.error('Error fetching pages:', err);
+      return sendJSON({ error: err.message }, 500);
+    }
+  }
+
+  // Page Content API
+  if (method === 'GET' && url.pathname === '/api/pages/content') {
+    try {
+      const slug = url.searchParams.get('slug');
+      if (!slug) return sendJSON({ error: 'Missing slug' }, 400);
+
+      const filePath = path.join(siteRoot, 'src', 'pages', `${slug}.astro`);
+      let fileContent = '';
+      try {
+        fileContent = await fs.readFile(filePath, 'utf-8');
+      } catch (e) {
+        return sendJSON({ error: 'Page not found' }, 404);
+      }
+
+      const meta = parseAstroPageMeta(`${slug}.astro`, fileContent);
+
+      let proseContent = '';
+      const proseMatch = fileContent.match(/<div[^>]*class=["'][^"']*prose[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
+      if (proseMatch) {
+        proseContent = proseMatch[1].trim();
+      }
+
+      return sendJSON({
+        success: true,
+        slug,
+        meta,
+        fullContent: fileContent,
+        proseContent,
+        hasProse: Boolean(proseMatch)
+      });
+    } catch (err) {
+      console.error('Error fetching page content:', err);
+      return sendJSON({ error: err.message }, 500);
+    }
+  }
+
+  // Page Save API
+  if (method === 'POST' && url.pathname === '/api/pages/save') {
+    try {
+      const body = await getBody();
+      if (!body.slug || body.content === undefined) {
+        return sendJSON({ error: 'Missing slug or content' }, 400);
+      }
+
+      const filePath = path.join(siteRoot, 'src', 'pages', `${body.slug}.astro`);
+      let existing = '';
+      try {
+        existing = await fs.readFile(filePath, 'utf-8');
+      } catch (e) {
+        return sendJSON({ error: 'Page not found' }, 404);
+      }
+
+      let finalContent = body.content;
+      if (body.mode === 'prose') {
+        finalContent = existing.replace(
+          /(<div[^>]*class=["'][^"']*prose[^"']*["'][^>]*>)[\s\S]*?(<\/div>)/i,
+          `$1\n${body.content}\n$2`
+        );
+      }
+
+      if (body.title) {
+        finalContent = updateAstroPageTitle(finalContent, body.title);
+      }
+
+      await fs.writeFile(filePath, finalContent, 'utf-8');
+      return sendJSON({ success: true, message: 'Page saved successfully' });
+    } catch (err) {
+      console.error('Error saving page:', err);
+      return sendJSON({ error: err.message }, 500);
+    }
+  }
+
+  // Page Create API
+  if (method === 'POST' && url.pathname === '/api/pages/create') {
+    try {
+      const body = await getBody();
+      if (!body.slug || !body.title) {
+        return sendJSON({ error: 'Slug and title are required' }, 400);
+      }
+
+      const cleanSlug = body.slug.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+      const filePath = path.join(siteRoot, 'src', 'pages', `${cleanSlug}.astro`);
+      
+      let alreadyExists = false;
+      try {
+        await fs.access(filePath);
+        alreadyExists = true;
+      } catch (e) {
+        alreadyExists = false;
+      }
+
+      if (alreadyExists) {
+        return sendJSON({ error: 'Page with this slug already exists' }, 400);
+      }
+
+      const eyebrow = body.eyebrow || body.title;
+      const description = body.description || '';
+
+      const template = `---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="${body.title}" description="${description}">
+<div class="shell">
+<section class="content-panel">
+<div class="page-heading">
+<p class="eyebrow">${eyebrow}</p>
+<h1>${body.title}</h1>
+<p class="page-lead">${description}</p>
+</div>
+
+<div class="prose">
+<p>ここにページの本文を入力してください。</p>
+</div>
+</section>
+</div>
+</BaseLayout>
+`;
+
+      await fs.writeFile(filePath, template, 'utf-8');
+      return sendJSON({ success: true, slug: cleanSlug });
+    } catch (err) {
+      console.error('Error creating page:', err);
       return sendJSON({ error: err.message }, 500);
     }
   }
