@@ -350,15 +350,44 @@ async function fetchOgpData(rawUrl) {
     throw new Error('HTTPまたはHTTPSプロトコルのみサポートしています。');
   }
 
+  // SSRF対策: 全角数字や非標準IP、ローカルおよび内部IPへのアクセス抑止 (CVE-2026-105483 / CVE-2026-106072 対策)
   const host = targetUrl.hostname.toLowerCase();
-  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || /^10\./.test(host) || /^192\.168\./.test(host)) {
+
+  // 1. 全角数字のチェック (CVE-2026-105483)
+  if (/[\uFF10-\uFF19]/.test(host)) {
+    throw new Error('無効なホスト名形式です。');
+  }
+
+  // 2. ローカル・内部ドメイン
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host.endsWith('.local') ||
+    host.endsWith('.internal')
+  ) {
     throw new Error('内部アドレスへのアクセスは禁止されています。');
   }
 
+  // 3. IPv4 プライベート・ループバック・非標準形式 (0x, 0177, 10.x, 172.16-31.x, 192.168.x, 169.254.x, 0.0.0.0等)
+  if (/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|0\.|0x|0[0-7]+)/i.test(host)) {
+    throw new Error('内部アドレスへのアクセスは禁止されています。');
+  }
+
+  // 4. IPv6 プライベート (fc/fd, fe80, ::ffff:等)
+  if (host.startsWith('[') || host.includes(':')) {
+    const cleanIpv6 = host.replace(/[\[\]]/g, '');
+    if (/^(::1|fc|fd|fe80|::ffff:)/i.test(cleanIpv6)) {
+      throw new Error('内部アドレスへのアクセスは禁止されています。');
+    }
+  }
+
+  // CVE-2026-111497 (Brotli RCE) 対策: Accept-Encoding を明示
   const response = await fetch(targetUrl.href, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Encoding': 'gzip, deflate'
     },
     signal: AbortSignal.timeout(6000),
     redirect: 'follow',
