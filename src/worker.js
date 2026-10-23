@@ -259,7 +259,7 @@ function findEntryRange(source, slug) {
 }
 
 // Helper: Make new entry string for astro-posts.ts
-function makeMetaEntry({ slug, title, description, date, category, tag, draft }) {
+function makeMetaEntry({ slug, title, description, date, category, tag, draft, isAiGenerated }) {
   const quote = (v) => JSON.stringify(v);
   const splitList = (v) => {
     if (!v) return [];
@@ -268,6 +268,7 @@ function makeMetaEntry({ slug, title, description, date, category, tag, draft })
   };
   const formatArray = (arr) => `[${arr.map(quote).join(', ')}]`;
   const draftLine = draft ? '\n\t\tdraft: true,' : '';
+  const aiLine = isAiGenerated ? '\n\t\tisAiGenerated: true,' : '';
 
   return `\t{
 \t\tslug: ${quote(slug)},
@@ -275,7 +276,7 @@ function makeMetaEntry({ slug, title, description, date, category, tag, draft })
 \t\tdescription: ${quote(description)},
 \t\tpubDate: new Date(${quote(date)}),
 \t\ttags: ${formatArray(splitList(tag))},
-\t\tcategories: ${formatArray(splitList(category))},${draftLine}
+\t\tcategories: ${formatArray(splitList(category))},${draftLine}${aiLine}
 \t\theadings: [
 \t\t\t{ depth: 2, slug: 'intro', text: '本文' },
 \t\t],
@@ -308,6 +309,7 @@ if (!post) {
 \tupdatedDate={post.updatedDate}
 \theroImage={thumbnail}
 \theadings={post.headings}
+\tisAiGenerated={post.isAiGenerated}
 >
 \t<ArticleBody />
 </BlogPost>
@@ -331,6 +333,7 @@ if (!post) {
 \tpubDate={post.pubDate}
 \tupdatedDate={post.updatedDate}
 \theadings={post.headings}
+\tisAiGenerated={post.isAiGenerated}
 >
 \t<ArticleBody />
 </BlogPost>
@@ -864,6 +867,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             const tagsMatch = entryText.match(/tags:\s*\[([\s\S]*?)\]/);
             const catMatch = entryText.match(/categories:\s*\[([\s\S]*?)\]/);
             const draftMatch = entryText.match(/draft:\s*true/);
+            const aiMatch = entryText.match(/isAiGenerated:\s*true/);
 
             const parseList = (str) => {
               if (!str) return [];
@@ -886,6 +890,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
               tags: tagsMatch ? parseList(tagsMatch[1]) : [],
               categories: catMatch ? parseList(catMatch[1]) : [],
               draft: Boolean(draftMatch),
+              isAiGenerated: Boolean(aiMatch),
               hasThumbnail: Boolean(thumbFile),
               thumbnailFile: thumbFile,
             });
@@ -924,6 +929,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
           const hasThumbnail = Boolean(body.thumbnailBase64 || body.thumbnail);
           const draft = body.publish ? false : (body.draft === false ? false : true);
+          const isAiGenerated = Boolean(body.isAiGenerated);
 
           // Prepare files to commit
           const filesToCommit = [];
@@ -961,6 +967,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             category: body.category || '',
             tag: body.tag || '',
             draft,
+            isAiGenerated,
           });
 
           const updatedMeta = metaFile.content.replace(
@@ -1045,12 +1052,57 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             const catArr = Array.isArray(body.categories) ? body.categories : body.categories.split(',').map(c=>c.trim()).filter(Boolean);
             entry = entry.replace(/categories:\s*\[([\s\S]*?)\]/, `categories: ${JSON.stringify(catArr)}`);
           }
+          if (body.isAiGenerated !== undefined) {
+            const hasAi = /isAiGenerated:\s*true/.test(entry);
+            if (body.isAiGenerated && !hasAi) {
+              if (/categories:/.test(entry)) {
+                entry = entry.replace(/(categories:[^\n]+)/, `$1\n\t\tisAiGenerated: true,`);
+              } else {
+                entry = entry.replace(/(slug:[^\n]+)/, `$1\n\t\tisAiGenerated: true,`);
+              }
+            } else if (!body.isAiGenerated && hasAi) {
+              entry = entry.replace(/\r?\n[ \t]*isAiGenerated:\s*true,?\r?/, '');
+            }
+          }
 
           const updatedMetaText = metaFile.content.slice(0, range.start) + entry + metaFile.content.slice(range.end);
           const commitMsg = `cms: update metadata for ${body.slug}`;
           const result = await putGitHubFile(metaPath, updatedMetaText, commitMsg, metaFile.sha, env);
 
           return jsonResponse({ success: true, commit: result.commit });
+        }
+
+        // Toggle AI Generated Status
+        if (url.pathname === '/api/posts/toggle-ai' && request.method === 'POST') {
+          const body = await request.json();
+          if (!body.slug) return errorResponse('Missing slug', 400);
+
+          const metaPath = 'src/content/astro-posts.ts';
+          const metaFile = await getGitHubFile(metaPath, env);
+          if (!metaFile) return errorResponse('astro-posts.ts not found', 404);
+
+          const range = findEntryRange(metaFile.content, body.slug);
+          if (!range) return errorResponse(`Post entry for ${body.slug} not found`, 404);
+
+          let entry = metaFile.content.slice(range.start, range.end);
+          let newStatus = false;
+          if (/isAiGenerated:\s*true/.test(entry)) {
+            entry = entry.replace(/\r?\n[ \t]*isAiGenerated:\s*true,?\r?/, '');
+            newStatus = false;
+          } else {
+            if (/categories:/.test(entry)) {
+              entry = entry.replace(/(categories:[^\n]+)/, `$1\n\t\tisAiGenerated: true,`);
+            } else {
+              entry = entry.replace(/(slug:[^\n]+)/, `$1\n\t\tisAiGenerated: true,`);
+            }
+            newStatus = true;
+          }
+
+          const updatedMetaText = metaFile.content.slice(0, range.start) + entry + metaFile.content.slice(range.end);
+          const commitMsg = `cms: toggle AI generated status for ${body.slug} to ${newStatus}`;
+          const result = await putGitHubFile(metaPath, updatedMetaText, commitMsg, metaFile.sha, env);
+
+          return jsonResponse({ success: true, isAiGenerated: newStatus, commit: result.commit });
         }
 
         // Toggle Draft Status

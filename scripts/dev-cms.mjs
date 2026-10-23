@@ -147,6 +147,7 @@ async function getPosts() {
       const tagsMatch = entryText.match(/tags:\s*\[([\s\S]*?)\]/);
       const catMatch = entryText.match(/categories:\s*\[([\s\S]*?)\]/);
       const draftMatch = entryText.match(/draft:\s*true/);
+      const aiMatch = entryText.match(/isAiGenerated:\s*true/);
       
       const parseList = (str) => {
         if (!str) return [];
@@ -165,6 +166,7 @@ async function getPosts() {
         tags: tagsMatch ? parseList(tagsMatch[1]) : [],
         categories: catMatch ? parseList(catMatch[1]) : [],
         draft: Boolean(draftMatch),
+        isAiGenerated: Boolean(aiMatch),
         hasThumbnail: Boolean(thumbFile),
         thumbnailFile: thumbFile,
       });
@@ -244,6 +246,31 @@ async function toggleDraft(slug) {
   await fs.writeFile(META_PATH, updatedMetaText, 'utf8');
 }
 
+// Toggle AI Generated status
+async function toggleAiGenerated(slug) {
+  const metaText = await fs.readFile(META_PATH, 'utf8');
+  const range = findEntryRange(metaText, slug);
+  if (!range) throw new Error(`Post entry for "${slug}" not found.`);
+
+  let entry = metaText.slice(range.start, range.end);
+  let newStatus = false;
+  if (/isAiGenerated:\s*true/.test(entry)) {
+    entry = entry.replace(/\r?\n[ \t]*isAiGenerated:\s*true,?\r?/, '');
+    newStatus = false;
+  } else {
+    if (/categories:/.test(entry)) {
+      entry = entry.replace(/(categories:[^\n]+)/, `$1\n\t\tisAiGenerated: true,`);
+    } else {
+      entry = entry.replace(/(slug:[^\n]+)/, `$1\n\t\tisAiGenerated: true,`);
+    }
+    newStatus = true;
+  }
+
+  const updatedMetaText = metaText.slice(0, range.start) + entry + metaText.slice(range.end);
+  await fs.writeFile(META_PATH, updatedMetaText, 'utf8');
+  return newStatus;
+}
+
 // Update metadata in astro-posts.ts
 async function updatePostMeta(slug, newData) {
   const metaText = await fs.readFile(META_PATH, 'utf8');
@@ -268,6 +295,18 @@ async function updatePostMeta(slug, newData) {
   if (newData.categories !== undefined) {
     const catArr = Array.isArray(newData.categories) ? newData.categories : newData.categories.split(',').map(c=>c.trim()).filter(Boolean);
     entry = entry.replace(/categories:\s*\[([\s\S]*?)\]/, `categories: ${JSON.stringify(catArr)}`);
+  }
+  if (newData.isAiGenerated !== undefined) {
+    const hasAi = /isAiGenerated:\s*true/.test(entry);
+    if (newData.isAiGenerated && !hasAi) {
+      if (/categories:/.test(entry)) {
+        entry = entry.replace(/(categories:[^\n]+)/, `$1\n\t\tisAiGenerated: true,`);
+      } else {
+        entry = entry.replace(/(slug:[^\n]+)/, `$1\n\t\tisAiGenerated: true,`);
+      }
+    } else if (!newData.isAiGenerated && hasAi) {
+      entry = entry.replace(/\r?\n[ \t]*isAiGenerated:\s*true,?\r?/, '');
+    }
   }
 
   const updatedMetaText = metaText.slice(0, range.start) + entry + metaText.slice(range.end);
@@ -1096,6 +1135,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         await processThumbnailUpload(body.slug, body.thumbnailBase64);
       }
 
+      if (body.isAiGenerated) {
+        await updatePostMeta(body.slug, { isAiGenerated: true });
+      }
+
       return sendJSON({ success: true, output: stdout });
     } catch (err) {
       console.error('Error creating post:', err);
@@ -1122,6 +1165,16 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const body = await getBody();
       await updatePostMeta(body.slug, body);
       return sendJSON({ success: true });
+    } catch (err) {
+      return sendJSON({ error: err.message }, 500);
+    }
+  }
+
+  if (method === 'POST' && url.pathname === '/api/posts/toggle-ai') {
+    try {
+      const body = await getBody();
+      const newStatus = await toggleAiGenerated(body.slug);
+      return sendJSON({ success: true, isAiGenerated: newStatus });
     } catch (err) {
       return sendJSON({ error: err.message }, 500);
     }

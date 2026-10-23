@@ -267,6 +267,11 @@
       color: var(--warning);
       border: 1px solid #fde68a;
     }
+    .badge-ai {
+      background-color: #ecfeff;
+      color: #0891b2;
+      border: 1px solid #a5f3fc;
+    }
 
     .post-title {
       font-size: 1.05rem;
@@ -1873,10 +1878,14 @@
           </div>
         </div>
 
-        <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1rem;">
+        <div class="form-group" style="display: flex; gap: 1.5rem; margin-top: 1rem; flex-wrap: wrap;">
           <label class="checkbox-group">
             <input type="checkbox" id="publish">
             <span>すぐに公開する（チェック無しで下書き）</span>
+          </label>
+          <label class="checkbox-group">
+            <input type="checkbox" id="create-is-ai">
+            <span>🤖 生成AIによって執筆された記事としてマークする</span>
           </label>
         </div>
 
@@ -1954,6 +1963,13 @@
             <label class="form-label">タグ (カンマ区切り)</label>
             <input type="text" class="form-control" id="edit-tag">
           </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 1rem;">
+          <label class="checkbox-group">
+            <input type="checkbox" id="edit-is-ai">
+            <span>🤖 生成AIによって執筆された記事としてマークする</span>
+          </label>
         </div>
 
         <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem;">
@@ -2470,6 +2486,10 @@
             ? '<span class="badge badge-draft">下書き (Draft)</span>' 
             : '<span class="badge badge-published">公開中 (Published)</span>';
           
+          const aiBadge = post.isAiGenerated
+            ? '<span class="badge badge-ai" title="生成AIによって執筆された記事">🤖 AI生成</span>'
+            : '';
+          
           const rawDate = String(post.pubDate || '');
           const dateStr = rawDate.length >= 10 ? rawDate.slice(0, 10) : rawDate;
           const tagsArr = Array.isArray(post.tags) ? post.tags : [];
@@ -2494,8 +2514,14 @@
             '<div class="post-card-body">' +
               '<div>' +
                 '<div class="post-header">' +
-                  draftBadge +
-                  '<button class="btn-secondary btn-sm btn-action-toggle" data-slug="' + safeSlug + '" title="ステータス切替">🔄 状態変更</button>' +
+                  '<div style="display:flex; gap:0.4rem; align-items:center;">' +
+                    draftBadge +
+                    aiBadge +
+                  '</div>' +
+                  '<div style="display:flex; gap:0.35rem; align-items:center;">' +
+                    '<button class="btn-secondary btn-sm btn-action-toggle-ai" data-slug="' + safeSlug + '" title="AI生成フラグ切替">' + (post.isAiGenerated ? '🤖 AI解除' : '🤖 AIマーク') + '</button>' +
+                    '<button class="btn-secondary btn-sm btn-action-toggle" data-slug="' + safeSlug + '" title="ステータス切替">🔄 状態変更</button>' +
+                  '</div>' +
                 '</div>' +
                 '<div class="post-title">' + escapeHtml(post.title) + '</div>' +
                 '<div class="post-slug">src/articles/' + safeSlug + '.astro</div>' +
@@ -2534,6 +2560,7 @@
         if (!slug) return;
         if (btn.classList.contains('btn-action-write')) openArticleEditorWindow(slug);
         if (btn.classList.contains('btn-action-toggle')) toggleDraft(slug);
+        if (btn.classList.contains('btn-action-toggle-ai')) toggleAiGenerated(slug);
         if (btn.classList.contains('btn-action-edit')) openEditModal(slug);
         if (btn.classList.contains('btn-action-ide')) openInIDE(slug);
         if (btn.classList.contains('btn-action-thumb')) triggerUploadForSlug(slug);
@@ -4732,6 +4759,8 @@ async function saveArticleContent() {
       currentCreateThumbBase64 = null;
       document.getElementById('create-thumb-preview-box').style.display = 'none';
       document.getElementById('upload-label-text').textContent = '📷 クリックして画像を選択、またはドラッグ＆ドロップ';
+      const aiCb = document.getElementById('create-is-ai');
+      if (aiCb) aiCb.checked = false;
       document.getElementById('create-modal').classList.add('active');
     }
     function closeCreateModal() {
@@ -4746,6 +4775,8 @@ async function saveArticleContent() {
       document.getElementById('edit-description').value = post.description || '';
       document.getElementById('edit-category').value = Array.isArray(post.categories) ? post.categories.join(', ') : '';
       document.getElementById('edit-tag').value = Array.isArray(post.tags) ? post.tags.join(', ') : '';
+      const editAiCb = document.getElementById('edit-is-ai');
+      if (editAiCb) editAiCb.checked = Boolean(post.isAiGenerated);
       document.getElementById('edit-modal').classList.add('active');
     }
     function closeEditModal() {
@@ -4766,6 +4797,7 @@ async function saveArticleContent() {
         category: document.getElementById('category').value,
         tag: document.getElementById('tag').value,
         publish: document.getElementById('publish').checked,
+        isAiGenerated: document.getElementById('create-is-ai') ? document.getElementById('create-is-ai').checked : false,
         thumbnailBase64: currentCreateThumbBase64
       };
 
@@ -4809,6 +4841,7 @@ async function saveArticleContent() {
         description: document.getElementById('edit-description').value,
         categories: document.getElementById('edit-category').value,
         tags: document.getElementById('edit-tag').value,
+        isAiGenerated: document.getElementById('edit-is-ai') ? document.getElementById('edit-is-ai').checked : false,
       };
 
       try {
@@ -4827,6 +4860,26 @@ async function saveArticleContent() {
         }
       } catch (err) {
         showToast('❌ エラーが発生しました');
+      }
+    }
+
+    async function toggleAiGenerated(slug) {
+      try {
+        const res = await fetch('/api/posts/toggle-ai', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug: slug })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          const isAi = data.isAiGenerated;
+          showToast(isAi ? '🤖 「AI生成記事」マークを付与しました' : '🤖 「AI生成記事」マークを解除しました', '🤖');
+          loadPosts();
+        } else {
+          showToast('❌ AIマーク変更に失敗しました: ' + (data.error || ''));
+        }
+      } catch (err) {
+        showToast('❌ 通信エラーが発生しました');
       }
     }
 
