@@ -1,4 +1,13 @@
 minimumReleaseAge: 0
 
+allowBuilds:
+  '@tauri-apps/cli': true
+  esbuild: true
+  sharp: true
+  workerd: true
+
 onlyBuiltDependencies:
+  - '@tauri-apps/cli'
+  - esbuild
   - sharp
+  - workerd
