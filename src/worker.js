@@ -891,7 +891,13 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             });
           }
 
-          return jsonResponse(posts.reverse());
+          posts.sort((a, b) => {
+            const dateA = a.pubDate ? new Date(a.pubDate).getTime() : 0;
+            const dateB = b.pubDate ? new Date(b.pubDate).getTime() : 0;
+            return dateB - dateA;
+          });
+
+          return jsonResponse(posts);
         }
 
         // Create New Post (Atomic Multi-file Commit)

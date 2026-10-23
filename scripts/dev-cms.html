@@ -2394,6 +2394,13 @@
           throw new Error(errMsg + detailStr);
         }
         allPosts = await res.json();
+        if (Array.isArray(allPosts)) {
+          allPosts.sort(function(a, b) {
+            var tA = a.pubDate ? new Date(a.pubDate).getTime() : 0;
+            var tB = b.pubDate ? new Date(b.pubDate).getTime() : 0;
+            return tB - tA;
+          });
+        }
         if (!isStandaloneMode) {
           renderPosts(allPosts);
         }

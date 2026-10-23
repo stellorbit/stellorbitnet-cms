@@ -170,7 +170,13 @@ async function getPosts() {
       });
     }
     
-    return posts.reverse();
+    posts.sort((a, b) => {
+      const dateA = a.pubDate ? new Date(a.pubDate).getTime() : 0;
+      const dateB = b.pubDate ? new Date(b.pubDate).getTime() : 0;
+      return dateB - dateA;
+    });
+
+    return posts;
   } catch (err) {
     console.error('Error reading posts:', err);
     return [];
