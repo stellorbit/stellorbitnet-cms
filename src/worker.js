@@ -1052,6 +1052,19 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             const catArr = Array.isArray(body.categories) ? body.categories : body.categories.split(',').map(c=>c.trim()).filter(Boolean);
             entry = entry.replace(/categories:\s*\[([\s\S]*?)\]/, `categories: ${JSON.stringify(catArr)}`);
           }
+          if (body.draft !== undefined) {
+            const isDraft = Boolean(body.draft);
+            const hasDraft = /draft:\s*true/.test(entry);
+            if (isDraft && !hasDraft) {
+              if (/categories:/.test(entry)) {
+                entry = entry.replace(/(categories:[^\n]+)/, `$1\n\t\tdraft: true,`);
+              } else {
+                entry = entry.replace(/(slug:[^\n]+)/, `$1\n\t\tdraft: true,`);
+              }
+            } else if (!isDraft && hasDraft) {
+              entry = entry.replace(/\r?\n[ \t]*draft:\s*true,?\r?/, '');
+            }
+          }
           if (body.isAiGenerated !== undefined) {
             const hasAi = /isAiGenerated:\s*true/.test(entry);
             if (body.isAiGenerated && !hasAi) {

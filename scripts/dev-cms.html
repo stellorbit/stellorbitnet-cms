@@ -273,6 +273,67 @@
       border: 1px solid #a5f3fc;
     }
 
+    /* --- Switch Toggle UI --- */
+    .status-toggle-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 42px;
+      height: 22px;
+      margin: 0;
+      flex-shrink: 0;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #cbd5e1;
+      transition: .25s ease;
+      border-radius: 22px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .25s ease;
+      border-radius: 50%;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    .switch input:checked + .slider {
+      background-color: #10b981;
+    }
+    .switch input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+    .status-text {
+      font-size: 0.8rem;
+      font-weight: 700;
+      cursor: pointer;
+      user-select: none;
+    }
+    .status-text.published {
+      color: #059669;
+    }
+    .status-text.draft {
+      color: #64748b;
+    }
+
     .post-title {
       font-size: 1.05rem;
       font-weight: 700;
@@ -1965,7 +2026,20 @@
           </div>
         </div>
 
-        <div class="form-group" style="margin-top: 1rem;">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">公開日</label>
+            <input type="date" class="form-control" id="edit-date">
+          </div>
+          <div class="form-group" style="display:flex; align-items:flex-end;">
+            <label class="checkbox-group" style="padding-bottom: 0.6rem;">
+              <input type="checkbox" id="edit-publish">
+              <span>公開状態にする（チェックを外すと下書き）</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top: 0.5rem;">
           <label class="checkbox-group">
             <input type="checkbox" id="edit-is-ai">
             <span>🤖 生成AIによって執筆された記事としてマークする</span>
@@ -1991,7 +2065,9 @@
             <input type="text" class="editor-title-input" id="editor-title-input" title="クリックして記事タイトルを直接変更" placeholder="記事タイトルを入力...">
           </div>
           <div class="editor-header-actions-primary">
-            <button class="btn-primary btn-sm" id="btn-save-article" onclick="saveArticleContent()">💾 保存 (Ctrl+S)</button>
+            <button class="btn-secondary btn-sm" id="btn-editor-settings" onclick="openEditModal(activeEditorSlug)" title="記事タイトル、説明、カテゴリ、AI生成マークなどのメタ設定">⚙️ 記事設定</button>
+            <button class="btn-secondary btn-sm" id="btn-save-draft" onclick="saveArticleContent()" title="記事を保存 (Ctrl+S)">💾 保存</button>
+            <button class="btn-primary btn-sm" id="btn-publish-instant" onclick="publishArticleInstantly()" title="記事を保存して即座に公開ステータスへ移行">🚀 即時公開</button>
             <button class="btn-secondary btn-sm" id="btn-close-editor" onclick="closeArticleEditor()">✕ 閉じる</button>
           </div>
         </div>
@@ -2004,8 +2080,8 @@
           </div>
 
           <div class="editor-header-actions-secondary">
-            <button class="btn-preview btn-sm" id="btn-editor-preview" onclick="openCurrentPostPreview()" title="開発サーバーでこの記事を表示">🌐 プレビュー</button>
-            <button class="btn-secondary btn-sm" onclick="openInIDE(activeEditorSlug)">📝 IDEで開く</button>
+            <span id="editor-pub-status-badge" style="font-size:0.75rem; font-weight:700; padding:0.2rem 0.55rem; border-radius:4px; display:none;"></span>
+            <button class="btn-preview btn-sm" id="btn-editor-preview" onclick="openCurrentPostPreview()" title="記事をプレビュー">🌐 プレビュー</button>
           </div>
         </div>
       </div>
@@ -2333,15 +2409,35 @@
 
     document.getElementById('date').value = new Date().toISOString().slice(0, 10);
 
-    // Astro Dev Server Status Check
+    // Astro Dev Server Status & Cloudflare Workers Mode Check
     async function checkDevServerStatus() {
       try {
+        const isWorkerEnv = Boolean(
+          window.location.hostname.includes('workers.dev') || 
+          window.location.hostname.includes('pages.dev') ||
+          window.location.hostname.includes('stellorbit.net')
+        );
+
+        const ctrlBox = document.getElementById('dev-server-ctrl');
+        const indicator = document.getElementById('status-indicator');
+
+        if (isWorkerEnv) {
+          // Cloudflare Workers / Remote 環境の場合
+          if (ctrlBox) {
+            ctrlBox.innerHTML = '<a href="https://stellorbit.net" target="_blank" rel="noopener" class="btn-preview" title="本番公開サイトを開く">🌐 本番サイト (stellorbit.net)</a>';
+          }
+          if (indicator) {
+            indicator.textContent = '☁️ Cloudflare Workers モード (本番連携中)';
+            indicator.style.color = '#0e7490';
+            indicator.style.fontWeight = '600';
+          }
+          return;
+        }
+
+        // ローカル開発環境の場合
         const res = await fetch('/api/dev-server/status');
         const data = await res.json();
         isDevServerRunning = Boolean(data.running);
-        
-        const ctrlBox = document.getElementById('dev-server-ctrl');
-        const indicator = document.getElementById('status-indicator');
 
         if (ctrlBox) {
           if (isDevServerRunning) {
@@ -2386,7 +2482,24 @@
       }
     }
 
-    async function handleOpenPreview(targetUrl) {
+    async function handleOpenPreview(targetUrl, slug) {
+      const isWorkerEnv = Boolean(
+        window.location.hostname.includes('workers.dev') || 
+        window.location.hostname.includes('pages.dev') ||
+        window.location.hostname.includes('stellorbit.net')
+      );
+
+      if (isWorkerEnv) {
+        const finalUrl = slug ? ('https://stellorbit.net/posts/' + encodeURIComponent(slug) + '/') : 'https://stellorbit.net';
+        const post = allPosts.find(function(p) { return p && p.slug === slug; });
+        if (post && post.draft) {
+          showToast('ℹ️ 下書き記事のため、本番サイト側には未反映です（公開後に反映されます）', 'ℹ️');
+        }
+        window.open(finalUrl, '_blank');
+        return;
+      }
+
+      // ローカル環境
       if (!isDevServerRunning) {
         showToast('🚀 開発サーバーを自動起動しています...', '⏳');
         await handleStartDevServer();
@@ -2396,8 +2509,15 @@
 
     function openCurrentPostPreview() {
       if (!activeEditorSlug) return;
-      const previewUrl = DEV_SERVER_BASE + '/posts/' + encodeURIComponent(activeEditorSlug);
-      handleOpenPreview(previewUrl);
+      const isWorkerEnv = Boolean(
+        window.location.hostname.includes('workers.dev') || 
+        window.location.hostname.includes('pages.dev') ||
+        window.location.hostname.includes('stellorbit.net')
+      );
+      const previewUrl = isWorkerEnv 
+        ? ('https://stellorbit.net/posts/' + encodeURIComponent(activeEditorSlug) + '/') 
+        : (DEV_SERVER_BASE + '/posts/' + encodeURIComponent(activeEditorSlug));
+      handleOpenPreview(previewUrl, activeEditorSlug);
     }
 
     async function loadPosts(silent) {
@@ -2448,7 +2568,7 @@
         return;
       }
 
-      // 差分チェック: 記事データに変更がなければDOMの破棄・再生成をスキップ（チラつき防止）
+      // 差分チェック: 記事データに変更がなければDOMの破棄・再生成をスキップ
       const currentPostsJson = JSON.stringify(posts);
       if (currentPostsJson === lastRenderedPostsJson) {
         return;
@@ -2472,19 +2592,14 @@
       if (draftEl) draftEl.textContent = draftCount;
       if (pubEl) pubEl.textContent = posts.length - draftCount;
 
-      if (posts.length === 0) {
-        grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 3rem;">記事が登録されていません</div>';
-        return;
-      }
-
       let htmlBuf = '';
       for (let i = 0; i < posts.length; i++) {
         const post = posts[i];
         if (!post) continue;
         try {
-          const draftBadge = post.draft 
-            ? '<span class="badge badge-draft">下書き (Draft)</span>' 
-            : '<span class="badge badge-published">公開中 (Published)</span>';
+          const isPublished = !post.draft;
+          const statusText = isPublished ? '公開' : '非公開';
+          const statusClass = isPublished ? 'published' : 'draft';
           
           const aiBadge = post.isAiGenerated
             ? '<span class="badge badge-ai" title="生成AIによって執筆された記事">🤖 AI生成</span>'
@@ -2514,13 +2629,13 @@
             '<div class="post-card-body">' +
               '<div>' +
                 '<div class="post-header">' +
-                  '<div style="display:flex; gap:0.4rem; align-items:center;">' +
-                    draftBadge +
+                  '<div class="status-toggle-wrap">' +
+                    '<label class="switch" title="クリックして公開/非公開を切替">' +
+                      '<input type="checkbox" class="post-status-toggle" data-slug="' + safeSlug + '" ' + (isPublished ? 'checked' : '') + '>' +
+                      '<span class="slider"></span>' +
+                    '</label>' +
+                    '<span class="status-text ' + statusClass + '" data-slug="' + safeSlug + '">' + statusText + '</span>' +
                     aiBadge +
-                  '</div>' +
-                  '<div style="display:flex; gap:0.35rem; align-items:center;">' +
-                    '<button class="btn-secondary btn-sm btn-action-toggle-ai" data-slug="' + safeSlug + '" title="AI生成フラグ切替">' + (post.isAiGenerated ? '🤖 AI解除' : '🤖 AIマーク') + '</button>' +
-                    '<button class="btn-secondary btn-sm btn-action-toggle" data-slug="' + safeSlug + '" title="ステータス切替">🔄 状態変更</button>' +
                   '</div>' +
                 '</div>' +
                 '<div class="post-title">' + escapeHtml(post.title) + '</div>' +
@@ -2532,10 +2647,9 @@
                 '<span class="post-date">📅 ' + escapeHtml(dateStr) + '</span>' +
                 '<div class="post-actions">' +
                   '<button class="btn-primary btn-sm btn-action-write" data-slug="' + safeSlug + '" title="ポップアップウィンドウで執筆画面を開く">✍️ 記事執筆</button>' +
-                  '<button class="btn-preview btn-sm btn-action-preview" data-url="' + postPreviewUrl + '" title="開発サーバーでこの記事を表示">🌐 プレビュー</button>' +
+                  '<button class="btn-preview btn-sm btn-action-preview" data-slug="' + safeSlug + '" data-url="' + postPreviewUrl + '" title="この記事を表示">🌐 プレビュー</button>' +
                   '<button class="btn-secondary btn-sm btn-action-thumb" data-slug="' + safeSlug + '" title="サムネイル画像の追加/変更">' + (post.hasThumbnail ? '🖼️ サムネ' : '＋ サムネ') + '</button>' +
-                  '<button class="btn-secondary btn-sm btn-action-edit" data-slug="' + safeSlug + '">⚙️ メタ編集</button>' +
-                  '<button class="btn-secondary btn-sm btn-action-ide" data-slug="' + safeSlug + '">📝 IDE</button>' +
+                  '<button class="btn-secondary btn-sm btn-action-edit" data-slug="' + safeSlug + '" title="記事タイトル、説明、カテゴリ、公開日、AI生成マークの編集">⚙️ 記事設定</button>' +
                 '</div>' +
               '</div>' +
             '</div>' +
@@ -2547,22 +2661,38 @@
 
       grid.innerHTML = htmlBuf;
 
+      // トグルスイッチの変更リスナー
+      grid.onchange = function(e) {
+        if (e.target && e.target.classList.contains('post-status-toggle')) {
+          var slug = e.target.getAttribute('data-slug');
+          var isChecked = e.target.checked;
+          togglePostStatus(slug, !isChecked);
+        }
+      };
+
       grid.onclick = function(e) {
+        var statusText = e.target.closest('.status-text');
+        if (statusText) {
+          var slug = statusText.getAttribute('data-slug');
+          var post = allPosts.find(function(p) { return p && p.slug === slug; });
+          if (post) {
+            togglePostStatus(slug, !post.draft);
+          }
+          return;
+        }
+
         var btn = e.target.closest('button');
         if (!btn) return;
         var slug = btn.getAttribute('data-slug');
         var url = btn.getAttribute('data-url');
         
-        if (btn.classList.contains('btn-action-preview') && url) {
-          handleOpenPreview(url);
+        if (btn.classList.contains('btn-action-preview')) {
+          handleOpenPreview(url, slug);
           return;
         }
         if (!slug) return;
         if (btn.classList.contains('btn-action-write')) openArticleEditorWindow(slug);
-        if (btn.classList.contains('btn-action-toggle')) toggleDraft(slug);
-        if (btn.classList.contains('btn-action-toggle-ai')) toggleAiGenerated(slug);
         if (btn.classList.contains('btn-action-edit')) openEditModal(slug);
-        if (btn.classList.contains('btn-action-ide')) openInIDE(slug);
         if (btn.classList.contains('btn-action-thumb')) triggerUploadForSlug(slug);
       };
     }
@@ -2739,6 +2869,7 @@
 
     // モーダルまたはポップアップでの本文初期化
     async function loadArticleContentIntoEditor(slug) {
+      activeEditorType = 'article';
       activeEditorSlug = slug;
       const modal = document.getElementById('editor-modal');
       if (modal) modal.classList.add('active');
@@ -2752,6 +2883,9 @@
 
       // ウィンドウタイトルの更新
       document.title = '📖 記事執筆: ' + currentTitle;
+
+      // ヘッダーステータスバッジ＆公開ボタン表示の同期
+      updateEditorHeaderStatus(post);
 
       const canvas = document.getElementById('wysiwyg-canvas');
       const textarea = document.getElementById('source-textarea');
@@ -3296,15 +3430,50 @@
       }
     }
 
-async function saveArticleContent() {
+    function updateEditorHeaderStatus(post) {
+      const badge = document.getElementById('editor-pub-status-badge');
+      const pubBtn = document.getElementById('btn-publish-instant');
+      if (!badge) return;
+
+      if (!post || activeEditorType === 'page') {
+        badge.style.display = 'none';
+        if (pubBtn) pubBtn.style.display = 'none';
+        return;
+      }
+
+      badge.style.display = 'inline-block';
+      if (post.draft) {
+        badge.textContent = '🔒 非公開 (下書き)';
+        badge.style.background = '#fef3c7';
+        badge.style.color = '#92400e';
+        if (pubBtn) {
+          pubBtn.style.display = 'inline-flex';
+          pubBtn.textContent = '🚀 即時公開';
+          pubBtn.title = '記事を保存して即座に公開ステータスへ移行';
+        }
+      } else {
+        badge.textContent = '✅ 公開中';
+        badge.style.background = '#dcfce7';
+        badge.style.color = '#166534';
+        if (pubBtn) {
+          pubBtn.style.display = 'inline-flex';
+          pubBtn.textContent = '🔒 非公開に戻す';
+          pubBtn.title = '記事を保存して非公開（下書き）ステータスへ移行';
+        }
+      }
+    }
+
+    async function saveArticleContent(silent) {
       if (activeEditorType === 'page') {
         await savePageContent();
         return;
       }
       if (!activeEditorSlug) return;
-      const btn = document.getElementById('btn-save-article');
-      btn.disabled = true;
-      btn.textContent = '⏳ 保存中...';
+      const btn = document.getElementById('btn-save-draft') || document.getElementById('btn-save-article');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ 保存中...';
+      }
 
       const content = getLatestContent();
       const newTitle = document.getElementById('editor-title-input').value.trim();
@@ -3335,8 +3504,12 @@ async function saveArticleContent() {
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          showToast('✅ 記事タイトル・本文を保存・同期しました！', '💾');
+          if (!silent) {
+            showToast('✅ 記事タイトル・本文を保存しました！', '💾');
+          }
           await loadPosts(true);
+          const updatedPost = allPosts.find(function(p) { return p && p.slug === activeEditorSlug; });
+          if (updatedPost) updateEditorHeaderStatus(updatedPost);
 
           // 親ウィンドウ（一覧タブ）が存在する場合は一覧を更新
           if (window.opener && !window.opener.closed && window.opener.loadPosts) {
@@ -3348,8 +3521,69 @@ async function saveArticleContent() {
       } catch(err) {
         alert('保存エラー: ' + err.message);
       } finally {
-        btn.disabled = false;
-        btn.textContent = '💾 保存 (Ctrl+S)';
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '💾 保存 (Ctrl+S)';
+        }
+      }
+    }
+
+    async function publishArticleInstantly() {
+      if (!activeEditorSlug) return;
+      const post = allPosts.find(function(p) { return p && p.slug === activeEditorSlug; });
+      const isCurrentlyDraft = post ? Boolean(post.draft) : true;
+      const targetDraftState = !isCurrentlyDraft;
+
+      const pubBtn = document.getElementById('btn-publish-instant');
+      if (pubBtn) {
+        pubBtn.disabled = true;
+        pubBtn.textContent = '⏳ 処理中...';
+      }
+
+      try {
+        // 1. 本文とタイトルを保存 (silent mode)
+        await saveArticleContent(true);
+
+        // 2. 公開ステータスを変更
+        const titleVal = document.getElementById('editor-title-input').value.trim() || (post ? post.title : undefined);
+        const res = await fetch('/api/posts/update-meta', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            slug: activeEditorSlug,
+            draft: targetDraftState,
+            title: titleVal,
+            description: post ? post.description : undefined,
+            categories: post && Array.isArray(post.categories) ? post.categories.join(', ') : undefined,
+            tags: post && Array.isArray(post.tags) ? post.tags.join(', ') : undefined,
+            isAiGenerated: post ? post.isAiGenerated : undefined,
+            date: post ? (post.pubDate ? post.pubDate.slice(0, 10) : undefined) : undefined
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (post) post.draft = targetDraftState;
+          updateEditorHeaderStatus(post);
+          if (targetDraftState) {
+            showToast('🔒 記事を非公開（下書き）に切り替えました', '🔒');
+          } else {
+            showToast('🎉 記事を即時公開しました！本番サイトに反映されます', '🚀');
+          }
+          await loadPosts(true);
+          if (window.opener && !window.opener.closed && window.opener.loadPosts) {
+            window.opener.loadPosts(true);
+          }
+        } else {
+          showToast('❌ 公開状態の変更に失敗しました: ' + (data.error || ''));
+        }
+      } catch (err) {
+        showToast('❌ 通信エラーが発生しました');
+      } finally {
+        if (pubBtn) {
+          pubBtn.disabled = false;
+          const currentPost = allPosts.find(function(p) { return p && p.slug === activeEditorSlug; });
+          updateEditorHeaderStatus(currentPost);
+        }
       }
     }
 
@@ -4775,8 +5009,18 @@ async function saveArticleContent() {
       document.getElementById('edit-description').value = post.description || '';
       document.getElementById('edit-category').value = Array.isArray(post.categories) ? post.categories.join(', ') : '';
       document.getElementById('edit-tag').value = Array.isArray(post.tags) ? post.tags.join(', ') : '';
+      
+      const rawDate = String(post.pubDate || '');
+      const dateVal = rawDate.length >= 10 ? rawDate.slice(0, 10) : new Date().toISOString().slice(0, 10);
+      const dateInput = document.getElementById('edit-date');
+      if (dateInput) dateInput.value = dateVal;
+
+      const editPubCb = document.getElementById('edit-publish');
+      if (editPubCb) editPubCb.checked = !post.draft;
+
       const editAiCb = document.getElementById('edit-is-ai');
       if (editAiCb) editAiCb.checked = Boolean(post.isAiGenerated);
+      
       document.getElementById('edit-modal').classList.add('active');
     }
     function closeEditModal() {
@@ -4835,13 +5079,20 @@ async function saveArticleContent() {
     async function handleEditMeta(e) {
       e.preventDefault();
       const slug = document.getElementById('edit-slug').value;
+      const isPublish = document.getElementById('edit-publish') ? document.getElementById('edit-publish').checked : true;
+      const isAi = document.getElementById('edit-is-ai') ? document.getElementById('edit-is-ai').checked : false;
+      const dateVal = document.getElementById('edit-date') ? document.getElementById('edit-date').value : undefined;
+      const titleVal = document.getElementById('edit-title').value;
+
       const payload = {
         slug: slug,
-        title: document.getElementById('edit-title').value,
+        title: titleVal,
         description: document.getElementById('edit-description').value,
         categories: document.getElementById('edit-category').value,
         tags: document.getElementById('edit-tag').value,
-        isAiGenerated: document.getElementById('edit-is-ai') ? document.getElementById('edit-is-ai').checked : false,
+        date: dateVal,
+        draft: !isPublish,
+        isAiGenerated: isAi
       };
 
       try {
@@ -4852,9 +5103,19 @@ async function saveArticleContent() {
           body: JSON.stringify(payload)
         });
         if (res.ok) {
-          showToast('✅ メタデータと記事タイトルを保存・同期しました！', '💾');
+          showToast('✅ 記事設定とメタデータを保存・同期しました！', '💾');
           closeEditModal();
-          loadPosts();
+          
+          if (activeEditorSlug === slug) {
+            const titleInput = document.getElementById('editor-title-input');
+            if (titleInput) titleInput.value = titleVal;
+            document.title = '📖 記事執筆: ' + titleVal;
+          }
+          await loadPosts();
+          if (activeEditorSlug === slug) {
+            const updatedPost = allPosts.find(function(p) { return p && p.slug === slug; });
+            if (updatedPost) updateEditorHeaderStatus(updatedPost);
+          }
         } else {
           showToast('❌ メタデータ保存に失敗しました');
         }
@@ -4863,66 +5124,51 @@ async function saveArticleContent() {
       }
     }
 
-    async function toggleAiGenerated(slug) {
+    async function togglePostStatus(slug, targetDraftState) {
       try {
-        const res = await fetch('/api/posts/toggle-ai', {
+        const post = allPosts.find(function(p) { return p && p.slug === slug; });
+        const res = await fetch('/api/posts/update-meta', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slug: slug })
+          body: JSON.stringify({
+            slug: slug,
+            draft: targetDraftState,
+            title: post ? post.title : undefined,
+            description: post ? post.description : undefined,
+            categories: post && Array.isArray(post.categories) ? post.categories.join(', ') : undefined,
+            tags: post && Array.isArray(post.tags) ? post.tags.join(', ') : undefined,
+            isAiGenerated: post ? post.isAiGenerated : undefined,
+            date: post ? (post.pubDate ? post.pubDate.slice(0, 10) : undefined) : undefined
+          })
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          const isAi = data.isAiGenerated;
-          showToast(isAi ? '🤖 「AI生成記事」マークを付与しました' : '🤖 「AI生成記事」マークを解除しました', '🤖');
-          loadPosts();
+          if (targetDraftState) {
+            showToast('🔒 記事を非公開（下書き）に設定しました', '🔒');
+          } else {
+            showToast('✅ 記事を公開に設定しました', '🚀');
+          }
+          if (post) {
+            post.draft = targetDraftState;
+          }
+          if (activeEditorSlug === slug) {
+            updateEditorHeaderStatus(post);
+          }
+          loadPosts(true);
         } else {
-          showToast('❌ AIマーク変更に失敗しました: ' + (data.error || ''));
+          showToast('❌ ステータス変更に失敗しました: ' + (data.error || ''));
+          loadPosts(true);
         }
       } catch (err) {
         showToast('❌ 通信エラーが発生しました');
-      }
-    }
-
-    async function openInIDE(slug) {
-      try {
-        const res = await fetch('/api/posts/open', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slug: slug })
-        });
-        const data = await res.json();
-        
-        if (data.path && navigator.clipboard) {
-          try {
-            await navigator.clipboard.writeText(data.path);
-          } catch(e) {}
-        }
-
-        if (data.vscodeUrl) {
-          window.location.href = data.vscodeUrl;
-        }
-        showToast('🚀 IDEでファイルを開きました (パスもコピー済み)', '📝');
-      } catch (err) {
-        showToast('❌ ファイル開くに失敗しました');
+        loadPosts(true);
       }
     }
 
     async function toggleDraft(slug) {
-      try {
-        const res = await fetch('/api/posts/toggle-draft', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slug: slug })
-        });
-        if (res.ok) {
-          showToast('🔄 下書き/公開ステータスを更新しました');
-          loadPosts();
-        } else {
-          showToast('❌ ステータス変更に失敗しました');
-        }
-      } catch (err) {
-        showToast('❌ ステータス変更に失敗しました');
-      }
+      const post = allPosts.find(function(p) { return p && p.slug === slug; });
+      const currentDraft = post ? Boolean(post.draft) : false;
+      await togglePostStatus(slug, !currentDraft);
     }
 
     async function triggerFullSync() {
