@@ -1,4 +1,5 @@
 # CMS-Stellorbit
+<!-- push verification: 2026-11-04 -->
 
 stellorbit.net 向け独立記事管理 CMS（Web UI & Tauri デスクトップアプリ）
 
