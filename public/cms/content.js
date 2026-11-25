@@ -145,7 +145,7 @@
     });
     restoreTweets(root);
     root.querySelectorAll('[data-cms-auto]').forEach(function (el) {
-      if (isVisuallyBlank(el)) el.remove();
+      if (el.textContent.trim() === '' && !el.querySelector('img, iframe, table, pre')) el.remove();
       else el.removeAttribute('data-cms-auto');
     });
     root.querySelectorAll('[contenteditable]').forEach(function (el) { el.removeAttribute('contenteditable'); });

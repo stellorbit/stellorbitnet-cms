@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { verifyPublicFeatures, verifyPages, verifyWorker } from './verify-cms-public.mjs';
+import { verifyBlockEditing } from './verify-cms-blocks.mjs';
 
 const root = process.cwd();
 // 記事と固定ページは読み取りのみ（保存・アップロードのAPIは模擬する）
@@ -87,7 +88,7 @@ async function verifyServer(base, port, slugs) {
     && (await status('/api/pages/save', bad)) === 400);
   check('画像フォルダ外の削除を拒否', (await status('/api/media/delete', { url: '/images/../images-x/a.png' })) !== 200);
   check('既存slugは読込可', (await status(`/api/posts/article-content?slug=${slugs[0]}`)) === 200);
-  for (const name of ['content', 'paste', 'blocks']) check(`script配信: ${name}`, (await status(`/cms/${name}.js`)) === 200);
+  for (const name of ['content', 'paste', 'blocks', 'block-edit']) check(`script配信: ${name}`, (await status(`/cms/${name}.js`)) === 200);
   check('許可外ファイルは非公開', (await status('/scripts/dev-cms.mjs')) === 404);
   check('127.0.0.1で接続可', (await fetch(`http://127.0.0.1:${port}/api/posts`)).ok);
   const lan = Object.values(os.networkInterfaces()).flat().filter((n) => n.family === 'IPv4' && !n.internal);
@@ -385,6 +386,7 @@ try {
   await verifyHeading(page);
   await verifyBlocks(page);
   await verifyPublicFeatures({ page, check, setup, paste, output });
+  await verifyBlockEditing({ page, check, setup, output });
   await verifySave(page, base, saved);
   await verifyPages({ page, check, base, saved, siteRoot });
   await verifyLayout(page, base, 'forza-horizon-6-ban');

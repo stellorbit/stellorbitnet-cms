@@ -1853,6 +1853,52 @@
       font-family: 'BIZ UDPGothic', 'Noto Sans JP', sans-serif;
       font-size: 0.75rem;
       white-space: nowrap;
+      flex-wrap: wrap;
+      row-gap: 3px;
+    }
+    .cms-block-row {
+      position: relative;
+      display: flex;
+      flex-wrap: wrap;
+      flex-basis: 100%;
+      align-items: center;
+      gap: 3px;
+    }
+    .cms-block-field {
+      min-width: 0;
+      height: 26px;
+      border: 1px solid #d9cbb5;
+      border-radius: 4px;
+      background: #fff;
+      color: #3f3427;
+      font: inherit;
+      padding: 0 4px;
+    }
+    select.cms-block-field:first-child { width: 12em; }
+    input.cms-block-field { width: 10em; }
+    .cms-block-field[hidden] { display: none; }
+    .cms-block-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      right: 0;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(6em, 1fr));
+      gap: 2px;
+      padding: 4px;
+      max-width: 100%;
+      background: #fffaf2;
+      border: 1px solid #d9cbb5;
+      border-radius: 6px;
+      box-shadow: 0 4px 14px rgba(60, 45, 20, 0.18);
+    }
+    .cms-block-menu[hidden] { display: none; }
+    .cms-target-outline {
+      position: absolute;
+      display: none;
+      pointer-events: none;
+      z-index: 31;
+      border: 2px solid #b8935a;
+      border-radius: 4px;
     }
     .cms-block-label { min-width: 3.5em; color: #7a6a52; text-align: center; }
     .cms-block-btn {
@@ -2175,7 +2221,7 @@
         </select>
 
         <span style="font-size:0.8rem; color:var(--text-muted); margin-left:0.2rem;">ID:</span>
-        <input type="text" class="tb-input" id="tb-heading-id" placeholder="例: section-1" oninput="applyHeadingIdToSelection()" title="見出しアンカーID">
+        <input type="text" class="tb-input" id="tb-heading-id" placeholder="例: section-1" onchange="applyHeadingIdToSelection()" onkeydown="if (event.key === 'Enter' && !event.isComposing) this.blur()" title="見出し・段落のアンカーID（Enterで反映）">
 
         <div class="tb-divider"></div>
 
@@ -2467,6 +2513,7 @@
   <script src="/cms/content.js"></script>
   <script src="/cms/paste.js"></script>
   <script src="/cms/blocks.js"></script>
+  <script src="/cms/block-edit.js"></script>
 
   <script>
     var allPosts = [];
@@ -3889,25 +3936,20 @@
       }, 10);
     }
 
-    // 見出しID属性の適用
+    // 見出し・段落のID属性の適用
+    // 入力欄へ移るとカーソル位置が失われるため、対象の要素を保持しておく
+    let idTargetElement = null;
+
     function applyHeadingIdToSelection() {
       if (currentEditorMode !== 'visual') return;
-      const idVal = document.getElementById('tb-heading-id').value.trim();
-      const sel = window.getSelection();
-      if (!sel || !sel.rangeCount) return;
-
-      let node = sel.anchorNode;
-      const canvas = document.getElementById('wysiwyg-canvas');
-      while (node && node !== canvas) {
-        if (node.nodeType === 1 && /^H[2-4]$/i.test(node.tagName)) {
-          if (idVal) {
-            node.setAttribute('id', idVal);
-          } else {
-            node.removeAttribute('id');
-          }
-          break;
-        }
-        node = node.parentNode;
+      const input = document.getElementById('tb-heading-id');
+      if (!idTargetElement || !idTargetElement.isConnected) {
+        showToast('IDを付ける見出しか段落をクリックしてください', '⚠️');
+        input.value = '';
+        return;
+      }
+      if (!window.CmsBlockEdit.setElementId(idTargetElement, input.value)) {
+        input.value = idTargetElement.getAttribute('id') || '';
       }
     }
 
@@ -4086,7 +4128,6 @@
 
       let node = sel.anchorNode;
       const canvas = document.getElementById('wysiwyg-canvas');
-      let foundId = '';
       let formatVal = 'p';
 
       while (node && node !== canvas) {
@@ -4094,9 +4135,6 @@
           const tag = node.tagName.toLowerCase();
           if (['h1', 'h2', 'h3', 'h4', 'p', 'blockquote'].includes(tag)) {
             formatVal = tag;
-            if (node.hasAttribute('id')) {
-              foundId = node.getAttribute('id');
-            }
             break;
           }
         }
@@ -4107,7 +4145,8 @@
       if (selectEl) selectEl.value = formatVal;
       const idInput = document.getElementById('tb-heading-id');
       if (idInput && document.activeElement !== idInput) {
-        idInput.value = foundId;
+        idTargetElement = window.CmsBlockEdit.targetAt(sel.anchorNode);
+        idInput.value = idTargetElement ? idTargetElement.getAttribute('id') || '' : '';
       }
 
       // ボタンスタイルのアクティブ判定
@@ -4517,6 +4556,20 @@
         getMode: function() { return editorContentReady ? currentEditorMode : 'loading'; },
         afterChange: afterEditorChange,
         toast: showToast
+      });
+      window.CmsBlockEdit.init({
+        canvas: canvasElem,
+        container: dropZone,
+        afterChange: afterEditorChange,
+        toast: showToast,
+        openers: {
+          callout: openCalloutModal,
+          table: openTableModal,
+          code: openCodeModal,
+          image: triggerEditorImageUpload,
+          media: openMediaPickerModal,
+          embed: openEmbedModal
+        }
       });
 
       // 見出し内で Enter キーを押したときの自動段落（p）脱出処理 (IME変換中は除外)

@@ -4,6 +4,10 @@
   'use strict';
 
   const DRAG_TYPE = 'text/x-cms-block';
+  // 操作パネルへ向かう移動とみなす、パネル左端からの余白(px)
+  const TOOLBAR_MARGIN = 120;
+  // 2段目の入力欄が1行に収まり、本文を覆いすぎないパネル幅(px)
+  const TOOLBAR_MAX_WIDTH = 460;
   const HISTORY_LIMIT = 30;
 
   let deps = null;
@@ -250,7 +254,10 @@
     highlight.style.height = Math.max(0, bottom - top) + 'px';
   }
 
-  function showFor(block) {
+  // 拡張パネル（対象選択・ID・追加）。読み込まれていない場合は何もしない
+  const extension = function () { return window.CmsBlockEdit; };
+
+  function showFor(block, preferred) {
     if (!block || block.parentNode !== deps.canvas || deps.getMode() !== 'visual') return hide();
     if (block !== activeBlock) sectionMode = false;
     activeBlock = block;
@@ -262,10 +269,18 @@
     toolbar.style.display = 'flex';
     const rect = relativeRect(block);
     const canvas = relativeRect(deps.canvas);
+    // 幅を測る前に左へ寄せ、直前の位置で幅が狭まらないようにする
+    toolbar.style.left = '0px';
+    toolbar.style.maxWidth = Math.max(0, Math.min(TOOLBAR_MAX_WIDTH, canvas.width - 16)) + 'px';
+    if (extension()) {
+      const units = getUnits();
+      extension().refresh(elementsOf(units, selectedRange(units)), preferred);
+    }
     const top = Math.min(Math.max(rect.top - toolbar.offsetHeight + 4, canvas.top), canvas.bottom - toolbar.offsetHeight);
     toolbar.style.top = Math.max(0, top) + 'px';
     toolbar.style.left = Math.max(0, canvas.left + canvas.width - toolbar.offsetWidth - 12) + 'px';
     drawHighlight();
+    if (extension()) extension().drawOutline();
     return undefined;
   }
 
@@ -276,6 +291,11 @@
     dropLine.style.display = 'none';
     activeBlock = null;
     sectionMode = false;
+    if (extension()) extension().clear();
+  }
+
+  function isBusy() {
+    return Boolean(extension()) && extension().isBusy();
   }
 
   function blockFromNode(node) {
@@ -320,7 +340,8 @@
     deps.container.append(highlight, dropLine, toolbar);
 
     toolbar.addEventListener('mousedown', function (e) {
-      if (!e.target.closest('[data-action="drag"]')) e.preventDefault();
+      // 本文のカーソルは保ち、ドラッグと入力欄の操作は通す
+      if (!e.target.closest('[data-action="drag"], select, input')) e.preventDefault();
     });
     toolbar.addEventListener('click', function (e) {
       const button = e.target.closest('button');
@@ -498,23 +519,34 @@
     deps.canvas.addEventListener('input', tidyCaption);
     deps.canvas.addEventListener('mousemove', function (e) {
       // ボタンを押したままの移動（ドラッグ開始や文字選択）では対象を切り替えない
-      if (e.buttons) return;
+      if (e.buttons || isBusy()) return;
       const block = blockFromNode(e.target);
       if (!block || block === activeBlock) return;
       // パネルへ向かう途中（現在のブロックのすぐ上）では対象を切り替えない
       if (activeBlock && activeBlock.isConnected) {
         const top = activeBlock.getBoundingClientRect().top;
-        if (e.clientY < top && e.clientY >= top - toolbar.offsetHeight) return;
+        const nearToolbar = e.clientX >= toolbar.getBoundingClientRect().left - TOOLBAR_MARGIN;
+        if (nearToolbar && e.clientY < top && e.clientY >= top - toolbar.offsetHeight) return;
       }
       showFor(block);
     });
+    // クリックした見出し・段落を操作対象にする
+    deps.canvas.addEventListener('mouseup', function (e) {
+      const block = blockFromNode(e.target);
+      if (!block || !extension()) return;
+      const units = getUnits();
+      const range = selectedRange(units);
+      const inSelection = range && elementsOf(units, range).includes(block);
+      showFor(inSelection ? activeBlock : block, extension().targetAt(e.target));
+    });
     // 入力中は本文に重ならないよう隠す
     deps.canvas.addEventListener('input', hide);
-    deps.container.addEventListener('mouseleave', function () { if (!dragging) hide(); });
+    deps.container.addEventListener('mouseleave', function () { if (!dragging && !isBusy()) hide(); });
     deps.container.addEventListener('dragover', onDragOver, true);
     deps.container.addEventListener('drop', onDrop, true);
     deps.canvas.addEventListener('scroll', function () { if (!dragging && activeBlock) showFor(activeBlock); });
-    window.addEventListener('resize', hide);
+    // 入力中の画面サイズ変更（画面キーボードの表示など）では閉じない
+    window.addEventListener('resize', function () { if (!isBusy()) hide(); });
     window.addEventListener('keydown', onKeyDown, true);
   }
 
@@ -524,5 +556,7 @@
     runOp,
     rewriteHistory,
     hide,
+    show: showFor,
+    getToolbar: function () { return toolbar; },
   };
 })();

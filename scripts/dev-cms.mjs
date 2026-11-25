@@ -27,7 +27,7 @@ const THUMBNAIL_DIR = path.join(siteRoot, 'src', 'assets', 'post-thumbnails');
 const ARTICLES_DIR = path.join(siteRoot, 'src', 'articles');
 const PUBLIC_IMAGES_DIR = path.join(siteRoot, 'public', 'images', 'posts');
 // 画面から読み込むスクリプト（この一覧以外は配信しない）
-const CMS_SCRIPTS = new Set(['/cms/content.js', '/cms/paste.js', '/cms/blocks.js']);
+const CMS_SCRIPTS = new Set(['/cms/content.js', '/cms/paste.js', '/cms/blocks.js', '/cms/block-edit.js']);
 // slug はファイル名やコマンド引数に使うため、形式を固定する
 const SAFE_SLUG = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
 const SLUG_ROUTES = new Set([
