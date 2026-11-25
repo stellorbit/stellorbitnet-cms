@@ -126,9 +126,10 @@ function replaceHeadings(entry, headings) {
     : '      ';
   const replacement = formatHeadings(headings, baseIndent);
 
-  const headingsBlock = /^[ \t]*headings:\s*\[[\s\S]*?^[ \t]*\],?/m;
+  const headingsBlock = /^[ \t]*headings:\s*\[(?:\],?|[\s\S]*?^[ \t]*\],?)/m;
   if (headingsBlock.test(entry)) {
-    return entry.replace(headingsBlock, replacement);
+    // 関数指定にして、見出し文内の $ が置換パターンとして解釈されるのを防ぐ
+    return entry.replace(headingsBlock, () => replacement);
   }
 
   const closingBraceIndex = entry.lastIndexOf('}');

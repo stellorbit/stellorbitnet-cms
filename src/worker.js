@@ -3,6 +3,8 @@
  * Full-featured GitHub REST API integration
  */
 
+import { assignHeadingIds, extractHeadings, formatHeadings, replaceHeadings } from './headings.js';
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -50,10 +52,10 @@ async function callGitHub(path, env, options = {}) {
   return response;
 }
 
-// Fetch text file contents from GitHub
-async function getGitHubFile(filePath, env) {
-  const branch = env.GITHUB_BRANCH || 'main';
-  const res = await callGitHub(`/contents/${filePath}?ref=${branch}`, env);
+// Fetch text file contents from GitHub (ref: 読み込むコミット。省略時はブランチ先頭)
+async function getGitHubFile(filePath, env, ref) {
+  const target = ref || env.GITHUB_BRANCH || 'main';
+  const res = await callGitHub(`/contents/${filePath}?ref=${target}`, env);
   if (!res.ok) {
     if (res.status === 404) return null;
     const errText = await res.text();
@@ -77,17 +79,24 @@ async function getGitHubBinary(filePath, env) {
   return await res.arrayBuffer();
 }
 
-// Atomic Multi-file Commit using GitHub Git Data API
-async function commitMultipleFiles(files, commitMessage, env) {
+// Get the HEAD commit sha of the target branch
+async function getBranchHeadSha(env) {
   const branch = env.GITHUB_BRANCH || 'main';
-
-  // 1. Get HEAD commit sha
   const refRes = await callGitHub(`/git/ref/heads/${branch}`, env);
   if (!refRes.ok) {
     throw new Error(`Failed to get ref for branch ${branch}: ${await refRes.text()}`);
   }
   const refData = await refRes.json();
-  const parentSha = refData.object.sha;
+  return refData.object.sha;
+}
+
+// Atomic Multi-file Commit using GitHub Git Data API
+// baseSha: ファイルを読み込んだコミット。指定すると、その後にブランチが進んでいた場合は更新に失敗する
+async function commitMultipleFiles(files, commitMessage, env, baseSha) {
+  const branch = env.GITHUB_BRANCH || 'main';
+
+  // 1. Get HEAD commit sha
+  const parentSha = baseSha || await getBranchHeadSha(env);
 
   // 2. Get base tree sha
   const commitRes = await callGitHub(`/git/commits/${parentSha}`, env);
@@ -269,6 +278,8 @@ function makeMetaEntry({ slug, title, description, date, category, tag, draft, i
   const formatArray = (arr) => `[${arr.map(quote).join(', ')}]`;
   const draftLine = draft ? '\n\t\tdraft: true,' : '';
   const aiLine = isAiGenerated ? '\n\t\tisAiGenerated: true,' : '';
+  // makeArticleTemplate の見出しと一致させる
+  const headingsBlock = formatHeadings([{ depth: 2, slug: 'intro', text: '本文' }], '\t\t');
 
   return `\t{
 \t\tslug: ${quote(slug)},
@@ -277,9 +288,7 @@ function makeMetaEntry({ slug, title, description, date, category, tag, draft, i
 \t\tpubDate: new Date(${quote(date)}),
 \t\ttags: ${formatArray(splitList(tag))},
 \t\tcategories: ${formatArray(splitList(category))},${draftLine}${aiLine}
-\t\theadings: [
-\t\t\t{ depth: 2, slug: 'intro', text: '本文' },
-\t\t],
+${headingsBlock}
 \t}`;
 }
 
@@ -1013,13 +1022,34 @@ import BaseLayout from '../layouts/BaseLayout.astro';
             return errorResponse('Missing slug or content', 400);
           }
 
-          const existing = await getGitHubFile(`src/articles/${body.slug}.astro`, env);
-          const sha = existing ? existing.sha : undefined;
+          const content = assignHeadingIds(String(body.content));
+          const filesToCommit = [
+            { path: `src/articles/${body.slug}.astro`, content, encoding: 'utf-8' },
+          ];
+
+          // 目次の読み込みとコミットを同じ基準コミットにそろえる
+          const baseSha = await getBranchHeadSha(env);
+          const metaPath = 'src/content/astro-posts.ts';
+          const metaFile = await getGitHubFile(metaPath, env, baseSha);
+          const range = metaFile ? findEntryRange(metaFile.content, body.slug) : null;
+
+          // 目次に該当記事がない場合は本文だけを保存する
+          if (range) {
+            const entry = metaFile.content.slice(range.start, range.end);
+            const updatedEntry = replaceHeadings(entry, extractHeadings(content));
+            if (updatedEntry !== entry) {
+              filesToCommit.push({
+                path: metaPath,
+                content: metaFile.content.slice(0, range.start) + updatedEntry + metaFile.content.slice(range.end),
+                encoding: 'utf-8',
+              });
+            }
+          }
 
           const commitMsg = `cms: update article content for ${body.slug}`;
-          const result = await putGitHubFile(`src/articles/${body.slug}.astro`, body.content, commitMsg, sha, env);
+          const commit = await commitMultipleFiles(filesToCommit, commitMsg, env, baseSha);
 
-          return jsonResponse({ success: true, commit: result.commit });
+          return jsonResponse({ success: true, commit });
         }
 
         // Update Post Metadata
