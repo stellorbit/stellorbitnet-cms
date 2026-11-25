@@ -10,21 +10,14 @@
   "scripts": {
     "start": "node ./scripts/dev-cms.mjs",
     "cms": "node ./scripts/dev-cms.mjs",
-    "cms:app": "node ./scripts/run-cms-gui.mjs",
-    "cms:app:rebuild": "cargo build --manifest-path src-tauri/Cargo.toml",
-    "cms:app:build": "node ./scripts/run-tauri.mjs build",
-    "cms:app:dev": "node ./scripts/run-tauri.mjs dev",
     "test": "node ./scripts/verify-cms-playwright.mjs",
     "test:standalone": "node ./scripts/test-cms-standalone.mjs",
-    "test:phase2": "node ./scripts/verify-phase2-editor.mjs",
-    "test:splash": "node ./scripts/verify-splash.mjs"
+    "test:phase2": "node ./scripts/verify-phase2-editor.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
     "sharp": "^0.35.5"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.5",
     "playwright": "^1.63.0",
     "wrangler": "^4.152.0"
   },

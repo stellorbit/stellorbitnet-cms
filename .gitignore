@@ -2,8 +2,6 @@
 node_modules/
 
 # build & caches
-src-tauri/target/
-src-tauri/gen/schemas/
 dist/
 
 # logs

@@ -468,6 +468,10 @@
     #table-modal, #code-modal, #embed-modal {
       z-index: 2500 !important;
     }
+    /* 記事設定は執筆画面の手前、通知（toast: 2000）の奥に表示する */
+    #edit-modal {
+      z-index: 1500;
+    }
     body.is-standalone-editor .modal-overlay#editor-modal {
       position: static;
       inset: auto;
@@ -496,22 +500,22 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-wrap: wrap;
       gap: 1rem;
     }
     .editor-header-top-row {
       display: flex;
       align-items: center;
       gap: 0.75rem;
-      flex: 1;
-      max-width: 48%;
+      flex: 1 1 640px;
       min-width: 0;
     }
     .editor-title-container {
       display: flex;
       align-items: center;
       gap: 0.6rem;
-      flex: 1;
-      min-width: 0;
+      flex: 1 1 240px;
+      min-width: 240px;
     }
     .editor-header-actions-primary {
       display: flex;
@@ -1251,6 +1255,16 @@
       border-color: var(--primary);
       background-color: #eff6ff;
     }
+    /* ファイルをドラッグ中の強調表示 */
+    .file-upload-box.drag-active,
+    .card-thumbnail-box.drag-active {
+      outline: 3px dashed var(--primary);
+      outline-offset: -6px;
+      background-color: #dbeafe;
+    }
+    .card-thumbnail-box.drag-active .card-thumbnail-img {
+      opacity: 0.45;
+    }
 
     .preview-image-box {
       margin-top: 0.75rem;
@@ -1386,6 +1400,8 @@
       }
       .editor-header-top-row {
         display: flex;
+        flex: 0 0 auto;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         gap: 0.5rem;
@@ -1393,7 +1409,7 @@
       }
       .editor-title-container {
         max-width: none;
-        flex: 1;
+        flex: 1 1 100%;
         min-width: 0;
       }
       .editor-title-input {
@@ -1402,9 +1418,11 @@
       }
       .editor-header-actions-primary {
         display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
         align-items: center;
         gap: 0.4rem;
-        flex-shrink: 0;
+        flex: 1 1 100%;
       }
       .editor-header-bottom-row {
         display: flex;
@@ -1818,6 +1836,65 @@
       border-radius: 4px;
     }
   
+
+    /* ブロック管理パネル */
+    .cms-block-toolbar {
+      position: absolute;
+      display: none;
+      z-index: 40;
+      align-items: center;
+      gap: 2px;
+      padding: 2px 4px;
+      background: #fffaf2;
+      border: 1px solid #d9cbb5;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(60, 45, 20, 0.14);
+      font-family: 'BIZ UDPGothic', 'Noto Sans JP', sans-serif;
+      font-size: 0.75rem;
+      white-space: nowrap;
+    }
+    .cms-block-label { min-width: 3.5em; color: #7a6a52; text-align: center; }
+    .cms-block-btn {
+      border: 1px solid transparent;
+      background: transparent;
+      color: #3f3427;
+      border-radius: 4px;
+      padding: 2px 7px;
+      font: inherit;
+      line-height: 1.5;
+      cursor: pointer;
+    }
+    .cms-block-btn:hover,
+    .cms-block-btn[aria-pressed="true"] { background: #f3e7d3; border-color: #cbb593; }
+    .cms-block-btn[data-action="drag"] { cursor: grab; }
+    .cms-block-btn[hidden] { display: none; }
+    .cms-block-highlight {
+      position: absolute;
+      display: none;
+      pointer-events: none;
+      z-index: 30;
+      border: 1px dashed #b8935a;
+      border-radius: 6px;
+      background: rgba(214, 174, 110, 0.08);
+    }
+    .cms-block-dropline {
+      position: absolute;
+      display: none;
+      pointer-events: none;
+      z-index: 45;
+      height: 3px;
+      border-radius: 2px;
+      background: #b8935a;
+    }
+    .wysiwyg-canvas .cms-upload-slot {
+      padding: 0.8rem;
+      text-align: center;
+      color: var(--text-muted);
+      border: 1px dashed var(--border-accent);
+      border-radius: 6px;
+      user-select: none;
+    }
+    .wysiwyg-canvas blockquote.twitter-tweet a:empty::after { content: 'Xのポスト: ' attr(href); }
   </style>
 </head>
 <body>
@@ -2386,14 +2463,26 @@
     <span id="toast-message">処理が完了しました</span>
   </div>
 
+  <script src="/cms/content.js"></script>
+  <script src="/cms/paste.js"></script>
+  <script src="/cms/blocks.js"></script>
+
   <script>
     var allPosts = [];
     var currentCreateThumbBase64 = null;
     var activeUploadSlug = null;
+    // サムネイルとして受け付ける画像形式（サーバー側の変換処理が扱える形式）
+    const THUMBNAIL_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'];
+    let createThumbReadSeq = 0;
+    const uploadingThumbSlugs = new Set();
     var activeEditorSlug = null;
     var currentEditorMode = 'visual';
     var activeImageNode = null;
     var isStandaloneMode = false;
+    var editorContentReady = false;
+    var editorEol = '\n';
+    var isSavingArticle = false;
+    var loadedPageTitle = '';
     const DEV_SERVER_BASE = 'http://localhost:4321';
     var isDevServerRunning = false;
 
@@ -2703,149 +2792,7 @@
 
     // タグの重複解消・不要ネスト除去・スタイルサニタイズ（はみ出し防止 & 不具合解消）
     function cleanArticleHtml(html) {
-      if (!html) return '';
-      try {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        const body = doc.body;
-
-        // エディタ専用の画像操作ツールバー・選択状態の除去
-        const toolbars = Array.from(body.querySelectorAll('.figure-action-toolbar'));
-        toolbars.forEach(function(tb) { tb.remove(); });
-        const selectedFigs = Array.from(body.querySelectorAll('.article-image-figure, figure, img'));
-        selectedFigs.forEach(function(el) {
-          el.classList.remove('is-selected');
-        });
-
-        // 1. font タグを解除 (unwrap)
-        const fontTags = Array.from(body.querySelectorAll('font'));
-        fontTags.forEach(function(font) {
-          while (font.firstChild) {
-            font.parentNode.insertBefore(font.firstChild, font);
-          }
-          font.remove();
-        });
-
-        // 2. はみ出しの原因となる絶対配置や固定幅、フォントサイズ・書体汚染の完全除去
-        const allElements = Array.from(body.querySelectorAll('*'));
-        allElements.forEach(function(el) {
-          if (el.style) {
-            // 見出し・段落のフォントサイズや書体の不揃い・縮小バグを完全防止
-            el.style.removeProperty('font-size');
-            el.style.removeProperty('font-family');
-            el.style.removeProperty('line-height');
-
-            // 固定幅・最大幅をリセットしてコンテナ枠内に収容
-            if (el.style.width && !el.style.width.endsWith('%')) {
-              el.style.removeProperty('width');
-            }
-            if (el.style.minWidth) {
-              el.style.removeProperty('min-width');
-            }
-            if (el.style.position === 'absolute' || el.style.position === 'fixed') {
-              el.style.removeProperty('position');
-            }
-            if (el.style.color && /(white|#fff|#ffffff|rgb\(\s*255,\s*255,\s*255\))/i.test(el.style.color)) {
-              el.style.removeProperty('color');
-            }
-            if (el.style.backgroundColor && /(black|#000|#0f172a|#0b1120)/i.test(el.style.backgroundColor)) {
-              el.style.removeProperty('background-color');
-            }
-            if (!el.style.cssText || !el.style.cssText.trim()) {
-              el.removeAttribute('style');
-            }
-          }
-        });
-        // 3. 重複した見出しタグや不自然な入れ子の解消
-        // 例: <h2><p>Text</p></h2> や <p><h2>Text</h2></p>
-        const headings = Array.from(body.querySelectorAll('h1, h2, h3, h4, h5, h6'));
-        headings.forEach(function(h) {
-          // 見出し内の p や div を unwrap
-          const innerBlocks = Array.from(h.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6'));
-          innerBlocks.forEach(function(inner) {
-            while (inner.firstChild) {
-              inner.parentNode.insertBefore(inner.firstChild, inner);
-            }
-            inner.remove();
-          });
-
-          // 3.1 見出しタグ内に誤って混入した <br> を検出し、段落（p）に自動分離
-          if (h.querySelector('br')) {
-            const lines = [];
-            let cur = [];
-            Array.from(h.childNodes).forEach(function(child) {
-              if (child.nodeType === 1 && child.tagName.toLowerCase() === 'br') {
-                lines.push(cur);
-                cur = [];
-              } else {
-                cur.push(child);
-              }
-            });
-            lines.push(cur);
-
-            const frag = doc.createDocumentFragment();
-            let firstHeadingUsed = false;
-            lines.forEach(function(lineNodes) {
-              const textContent = lineNodes.map(function(n) { return n.textContent || ''; }).join('').trim();
-              if (!textContent) {
-                const emptyP = doc.createElement('p');
-                emptyP.appendChild(doc.createElement('br'));
-                frag.appendChild(emptyP);
-                return;
-              }
-
-              if (!firstHeadingUsed) {
-                const newH = doc.createElement(h.tagName.toLowerCase());
-                if (h.hasAttribute('id')) newH.setAttribute('id', h.getAttribute('id'));
-                lineNodes.forEach(function(n) { newH.appendChild(n); });
-                frag.appendChild(newH);
-                firstHeadingUsed = true;
-              } else {
-                const p = doc.createElement('p');
-                lineNodes.forEach(function(n) { p.appendChild(n); });
-                frag.appendChild(p);
-              }
-            });
-
-            h.replaceWith(frag);
-          }
-        });
-
-        // 4. 重複したインライン装飾タグの解消
-        // 例: <b><b>text</b></b>, <strong><strong>text</strong></strong>, <b><strong>text</strong></b>
-        function flattenDuplicates(selector) {
-          const tags = Array.from(body.querySelectorAll(selector));
-          tags.forEach(function(tag) {
-            const innerDuplicates = Array.from(tag.querySelectorAll(selector));
-            innerDuplicates.forEach(function(dup) {
-              while (dup.firstChild) {
-                dup.parentNode.insertBefore(dup.firstChild, dup);
-              }
-              dup.remove();
-            });
-          });
-        }
-        flattenDuplicates('b, strong');
-        flattenDuplicates('i, em');
-        flattenDuplicates('u');
-        flattenDuplicates('s, del');
-
-        // 5. 属性のない空の span タグを解除
-        const spanTags = Array.from(body.querySelectorAll('span'));
-        spanTags.forEach(function(span) {
-          if (!span.attributes || span.attributes.length === 0) {
-            while (span.firstChild) {
-              span.parentNode.insertBefore(span.firstChild, span);
-            }
-            span.remove();
-          }
-        });
-
-        return body.innerHTML;
-      } catch (e) {
-        console.error('Error cleaning HTML:', e);
-        return html;
-      }
+      return window.CmsContent.cleanHtml(html);
     }
 
     // 執筆画面をポップアップウィンドウで開く
@@ -2871,10 +2818,12 @@
     async function loadArticleContentIntoEditor(slug) {
       activeEditorType = 'article';
       activeEditorSlug = slug;
+      activeImageNode = null;
+      editorContentReady = false;
       const modal = document.getElementById('editor-modal');
       if (modal) modal.classList.add('active');
       const post = allPosts.find(function(p) { return p && p.slug === slug; });
-      
+
       const titleInput = document.getElementById('editor-title-input');
       const currentTitle = post ? post.title : slug;
       if (titleInput) {
@@ -2886,36 +2835,70 @@
 
       // ヘッダーステータスバッジ＆公開ボタン表示の同期
       updateEditorHeaderStatus(post);
+      showEditorLoading('⏳ 記事本文を読み込み中...');
 
-      const canvas = document.getElementById('wysiwyg-canvas');
-      const textarea = document.getElementById('source-textarea');
-      canvas.innerHTML = '<div style="color:var(--text-muted); padding: 2rem; text-align: center;">⏳ 記事本文を読み込み中...</div>';
-      textarea.value = '';
-
-      switchEditorMode('visual');
-
+      // 読み込みに失敗した状態では保存させない（本文の上書き消失を防ぐ）
       try {
         const res = await fetch('/api/posts/article-content?slug=' + encodeURIComponent(slug));
         const data = await res.json();
+        if (activeEditorType !== 'article' || activeEditorSlug !== slug) return;
         if (res.ok && data.content !== undefined) {
-          const cleaned = cleanArticleHtml(data.content);
-          canvas.innerHTML = cleaned || '<p>本文を入力してください...</p>';
-          textarea.value = cleaned;
-          bindImageClickHandlers();
-          updateTocList();
+          showEditorContent(data.content, false);
         } else {
-          canvas.innerHTML = '<p>新規本文を記述...</p>';
-          textarea.value = '';
+          showEditorFailure();
           showToast('⚠️ 本文読み込み: ' + (data.error || ''));
         }
       } catch(err) {
-        canvas.innerHTML = '<p>本文の読み込みに失敗しました。</p>';
+        console.error('Error loading article:', err);
+        showEditorFailure();
         showToast('❌ 本文の読込に失敗しました');
       }
 
       try {
         document.execCommand('defaultParagraphSeparator', false, 'p');
       } catch(e) {}
+    }
+
+    function showEditorLoading(message) {
+      const canvas = document.getElementById('wysiwyg-canvas');
+      applyEditorModeView('visual');
+      canvas.setAttribute('contenteditable', 'false');
+      canvas.innerHTML = '<div style="color:var(--text-muted); padding: 2rem; text-align: center;">' + escapeHtml(message) + '</div>';
+      document.getElementById('source-textarea').value = '';
+      window.CmsBlocks.resetHistory();
+    }
+
+    function showEditorFailure() {
+      document.getElementById('wysiwyg-canvas').innerHTML = '<p>本文を読み込めませんでした。この状態では保存できません。</p>';
+    }
+
+    // 読み込んだ本文を表示する。ビジュアル編集で壊れる内容は、原文のままソース編集にする
+    function showEditorContent(raw, keepSource) {
+      const textarea = document.getElementById('source-textarea');
+      editorEol = raw.includes('\r\n') ? '\r\n' : '\n';
+      const reason = keepSource ? '固定ページ全体' : window.CmsContent.detectSourceOnly(raw);
+      editorContentReady = true;
+      if (reason) {
+        textarea.value = raw;
+        document.getElementById('wysiwyg-canvas').innerHTML = '';
+        applyEditorModeView('source');
+        showToast(reason + 'のため、ソース編集のみ対応です', '📝');
+      } else {
+        textarea.value = cleanArticleHtml(raw);
+        applyEditorModeView('visual');
+        renderCanvas(textarea.value);
+      }
+      updateTocList();
+    }
+
+    function renderCanvas(html) {
+      const canvas = document.getElementById('wysiwyg-canvas');
+      canvas.setAttribute('contenteditable', 'true');
+      canvas.innerHTML = html;
+      window.CmsContent.decorateForEditor(canvas);
+      window.CmsBlocks.resetHistory();
+      bindImageClickHandlers();
+      if (canvas.querySelector('blockquote.twitter-tweet')) renderTwitterWidgets();
     }
 
     function openArticleEditorModal(slug) {
@@ -2932,28 +2915,41 @@
       }
     }
 
-    function switchEditorMode(mode) {
+    function applyEditorModeView(mode) {
       currentEditorMode = mode;
-      const canvas = document.getElementById('wysiwyg-canvas');
-      const textarea = document.getElementById('source-textarea');
-      const tabVisual = document.getElementById('tab-visual');
-      const tabSource = document.getElementById('tab-source');
+      const isVisual = mode === 'visual';
+      document.getElementById('tab-visual').classList.toggle('active', isVisual);
+      document.getElementById('tab-source').classList.toggle('active', !isVisual);
+      document.getElementById('wysiwyg-canvas').style.display = isVisual ? 'block' : 'none';
+      document.getElementById('source-textarea').style.display = isVisual ? 'none' : 'block';
+      window.CmsBlocks.hide();
+    }
 
-      if (mode === 'visual') {
-        tabVisual.classList.add('active');
-        tabSource.classList.remove('active');
-        canvas.style.display = 'block';
-        textarea.style.display = 'none';
-        canvas.innerHTML = cleanArticleHtml(textarea.value);
-        bindImageClickHandlers();
-        updateTocList();
-      } else {
-        tabSource.classList.add('active');
-        tabVisual.classList.remove('active');
-        textarea.style.display = 'block';
-        canvas.style.display = 'none';
-        textarea.value = cleanArticleHtml(canvas.innerHTML);
+    function isFullPageMode() {
+      return activeEditorType === 'page' && activePageEditMode === 'full';
+    }
+
+    function switchEditorMode(mode) {
+      // 同じタブの再クリックで古い内容に戻らないようにする
+      if (mode === currentEditorMode || !editorContentReady) return;
+      if (window.CmsPaste.hasPendingUploads()) {
+        showToast('画像のアップロード完了後に切り替えてください', '⏳');
+        return;
       }
+      const textarea = document.getElementById('source-textarea');
+      if (mode === 'visual') {
+        const reason = isFullPageMode() ? '固定ページ全体の編集' : window.CmsContent.detectSourceOnly(textarea.value);
+        if (reason) {
+          showToast(reason + 'のため、ビジュアル編集には切り替えられません', '📝');
+          return;
+        }
+        applyEditorModeView('visual');
+        renderCanvas(cleanArticleHtml(textarea.value));
+      } else {
+        textarea.value = window.CmsContent.serializeElement(document.getElementById('wysiwyg-canvas'));
+        applyEditorModeView('source');
+      }
+      updateTocList();
     }
 
     function clearSelectedImages() {
@@ -3074,7 +3070,7 @@
       const prev = element.previousElementSibling;
       const next = element.nextElementSibling;
 
-      element.remove();
+      window.CmsBlocks.runOp(function() { element.remove(); });
       activeImageNode = null;
 
       // 削除後のカーソル位置を自然に復帰
@@ -3170,10 +3166,48 @@
     }
     function getLatestContent() {
       if (currentEditorMode === 'visual') {
-        return cleanArticleHtml(document.getElementById('wysiwyg-canvas').innerHTML);
-      } else {
-        return cleanArticleHtml(document.getElementById('source-textarea').value);
+        return window.CmsContent.serializeElement(document.getElementById('wysiwyg-canvas'));
       }
+      const raw = document.getElementById('source-textarea').value;
+      if (isFullPageMode() || window.CmsContent.detectSourceOnly(raw)) {
+        // コンポーネントを含む内容は原文のまま保存する（改行コードも維持）
+        return editorEol === '\r\n' ? raw.replace(/\r?\n/g, '\r\n') : raw;
+      }
+      return cleanArticleHtml(raw);
+    }
+
+    // 本文に直接埋め込まれた base64 画像をファイルへ置き換える
+    async function convertEmbeddedImages(slug) {
+      const upload = function(dataUrl, filename) { return uploadImageData(dataUrl, filename, slug); };
+      if (currentEditorMode === 'visual') {
+        await window.CmsContent.uploadEmbeddedImages(document.getElementById('wysiwyg-canvas'), upload);
+        return;
+      }
+      const textarea = document.getElementById('source-textarea');
+      if (isFullPageMode() || window.CmsContent.detectSourceOnly(textarea.value)) return;
+      const template = window.CmsContent.parseArticle(textarea.value);
+      if (await window.CmsContent.uploadEmbeddedImages(template.content, upload)) {
+        textarea.value = template.innerHTML;
+      }
+    }
+
+    function canSaveEditor() {
+      if (!activeEditorSlug || isSavingArticle) return false;
+      const modal = document.getElementById('editor-modal');
+      if (!isStandaloneMode && modal && !modal.classList.contains('active')) return false;
+      if (!editorContentReady) {
+        showToast('本文が読み込まれていないため保存できません', '⚠️');
+        return false;
+      }
+      return true;
+    }
+
+    // アップロードの完了と埋め込み画像の置き換えを待ってから本文を返す
+    async function prepareEditorContent(slug) {
+      await window.CmsPaste.waitForUploads();
+      await convertEmbeddedImages(slug);
+      if (activeEditorSlug !== slug || !editorContentReady) return null;
+      return getLatestContent();
     }
 
     // Save Article Content & Title Simultaneously
@@ -3351,65 +3385,61 @@
     async function loadPageContentIntoEditor(slug) {
       activeEditorType = 'page';
       activeEditorSlug = slug;
+      activeImageNode = null;
+      editorContentReady = false;
       const modal = document.getElementById('editor-modal');
       if (modal) modal.classList.add('active');
 
       const titleInput = document.getElementById('editor-title-input');
-      const canvas = document.getElementById('wysiwyg-canvas');
-      const textarea = document.getElementById('source-textarea');
-
       titleInput.value = slug;
-      canvas.innerHTML = '<p>読み込み中...</p>';
-      textarea.value = '';
+      updateEditorHeaderStatus(null);
+      showEditorLoading('⏳ 読み込み中...');
 
       try {
         const res = await fetch('/api/pages/content?slug=' + encodeURIComponent(slug));
         const data = await res.json();
+        if (activeEditorType !== 'page' || activeEditorSlug !== slug) return;
         if (res.ok && data.success) {
           const pageTitle = (data.meta && data.meta.title) ? data.meta.title : slug;
           titleInput.value = pageTitle;
+          loadedPageTitle = pageTitle.trim();
           document.title = '📄 ページ編集: ' + pageTitle;
-
-          if (data.hasProse && data.proseContent) {
-            activePageEditMode = 'prose';
-            canvas.innerHTML = cleanArticleHtml(data.proseContent);
-            textarea.value = cleanArticleHtml(data.proseContent);
-            setEditorMode('visual');
-          } else {
-            activePageEditMode = 'full';
-            canvas.innerHTML = cleanArticleHtml(data.fullContent);
-            textarea.value = data.fullContent;
-            setEditorMode('source');
-          }
-
-          bindImageClickHandlers();
-          updateTocInspector();
+          activePageEditMode = data.hasProse ? 'prose' : 'full';
+          showEditorContent(data.hasProse ? data.proseContent : data.fullContent, !data.hasProse);
         } else {
+          showEditorFailure();
           alert('ページ読み込みエラー: ' + (data.error || '不明なエラー'));
         }
       } catch(err) {
+        console.error('Error loading page:', err);
+        showEditorFailure();
         alert('通信エラー: ' + err.message);
       }
     }
 
     async function savePageContent() {
-      if (!activeEditorSlug) return;
-      const btn = document.getElementById('btn-save-article');
-      btn.disabled = true;
-      btn.textContent = '⏳ 保存中...';
-
-      const content = getLatestContent();
-      const newTitle = document.getElementById('editor-title-input').value.trim();
+      if (!canSaveEditor()) return false;
+      isSavingArticle = true;
+      const slug = activeEditorSlug;
+      const btn = document.getElementById('btn-save-draft');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ 保存中...';
+      }
 
       try {
+        const content = await prepareEditorContent(slug);
+        if (content === null) return false;
+        const newTitle = document.getElementById('editor-title-input').value.trim();
         const res = await fetch('/api/pages/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            slug: activeEditorSlug,
+            slug: slug,
             content: content,
-            mode: activePageEditMode || 'prose',
-            title: newTitle
+            mode: activePageEditMode,
+            // タイトルは変更した場合だけ送る（送ると本文内の見出しも書き換わるため）
+            title: newTitle !== loadedPageTitle ? newTitle : undefined
           })
         });
         const data = await res.json();
@@ -3419,14 +3449,19 @@
           if (window.opener && !window.opener.closed && window.opener.loadPages) {
             window.opener.loadPages();
           }
-        } else {
-          alert('ページ保存失敗: ' + (data.error || '不明なエラー'));
+          return true;
         }
+        alert('ページ保存失敗: ' + (data.error || '不明なエラー'));
+        return false;
       } catch(err) {
         alert('通信エラー: ' + err.message);
+        return false;
       } finally {
-        btn.disabled = false;
-        btn.textContent = '💾 保存 (Ctrl+S)';
+        isSavingArticle = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '💾 保存';
+        }
       }
     }
 
@@ -3465,20 +3500,22 @@
 
     async function saveArticleContent(silent) {
       if (activeEditorType === 'page') {
-        await savePageContent();
-        return;
+        return savePageContent();
       }
-      if (!activeEditorSlug) return;
+      if (!canSaveEditor()) return false;
+      isSavingArticle = true;
+      const slug = activeEditorSlug;
       const btn = document.getElementById('btn-save-draft') || document.getElementById('btn-save-article');
       if (btn) {
         btn.disabled = true;
         btn.textContent = '⏳ 保存中...';
       }
 
-      const content = getLatestContent();
-      const newTitle = document.getElementById('editor-title-input').value.trim();
-
       try {
+        const content = await prepareEditorContent(slug);
+        if (content === null) return false;
+        const newTitle = document.getElementById('editor-title-input').value.trim();
+
         // 1. Update Title / Meta if title was changed
         const post = allPosts.find(function(p) { return p && p.slug === activeEditorSlug; });
         if (newTitle && (!post || newTitle !== post.title)) {
@@ -3515,12 +3552,15 @@
           if (window.opener && !window.opener.closed && window.opener.loadPosts) {
             window.opener.loadPosts(true);
           }
-        } else {
-          alert('保存失敗: ' + (data.error || '不明なエラー'));
+          return true;
         }
+        alert('保存失敗: ' + (data.error || '不明なエラー'));
+        return false;
       } catch(err) {
         alert('保存エラー: ' + err.message);
+        return false;
       } finally {
+        isSavingArticle = false;
         if (btn) {
           btn.disabled = false;
           btn.textContent = '💾 保存 (Ctrl+S)';
@@ -3529,7 +3569,7 @@
     }
 
     async function publishArticleInstantly() {
-      if (!activeEditorSlug) return;
+      if (!activeEditorSlug || activeEditorType === 'page') return;
       const post = allPosts.find(function(p) { return p && p.slug === activeEditorSlug; });
       const isCurrentlyDraft = post ? Boolean(post.draft) : true;
       const targetDraftState = !isCurrentlyDraft;
@@ -3541,8 +3581,8 @@
       }
 
       try {
-        // 1. 本文とタイトルを保存 (silent mode)
-        await saveArticleContent(true);
+        // 1. 本文とタイトルを保存 (silent mode)。保存できなければ公開状態を変えない
+        if (!(await saveArticleContent(true))) return;
 
         // 2. 公開ステータスを変更
         const titleVal = document.getElementById('editor-title-input').value.trim() || (post ? post.title : undefined);
@@ -3625,7 +3665,46 @@
     }
 
     // 見出し・段落の安全な直接置換 (重複ネスト・フォントサイズ不整合・複数行巻き込みを完全防止)
+    // 見出し・段落の切り替え。画像や埋め込みは巻き込まない
     function setBlockFormat(targetTag) {
+      if (currentEditorMode !== 'visual') {
+        applyBlockFormat(targetTag);
+        return;
+      }
+      const canvas = document.getElementById('wysiwyg-canvas');
+      canvas.focus();
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount) return;
+
+      const anchorElement = sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement;
+      if (canvas.contains(anchorElement) &&
+          anchorElement.closest('figure, .blog-card-wrapper, .youtube-embed-wrapper, blockquote.twitter-tweet, pre, table')) {
+        showToast('画像や埋め込みの中は変換できません', '⚠️');
+        updateToolbarState();
+        return;
+      }
+      // 段落に入っていない文字は、先に段落化してから変換する
+      let top = sel.anchorNode;
+      while (top && top.parentNode !== canvas) top = top.parentNode;
+      if (top && (top.nodeType === 3 || /^(A|B|STRONG|I|EM|U|S|SPAN|CODE|BR)$/.test(top.nodeName))) {
+        const node = sel.anchorNode;
+        const offset = sel.anchorOffset;
+        window.CmsContent.wrapLooseInline(canvas);
+        sel.collapse(node, offset);
+      }
+
+      window.CmsBlocks.runOp(function() {
+        applyBlockFormat(targetTag);
+        canvas.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(function(heading) {
+          if (window.CmsContent.liftFromHeading(heading) &&
+              window.CmsContent.isVisuallyBlank(heading) && !heading.querySelector('br')) {
+            heading.appendChild(document.createElement('br'));
+          }
+        });
+      });
+    }
+
+    function applyBlockFormat(targetTag) {
       if (currentEditorMode !== 'visual') {
         alert('ビジュアルモードでお試しください');
         return;
@@ -4150,8 +4229,7 @@
       code.textContent = text;
       pre.appendChild(code);
 
-      range.deleteContents();
-      range.insertNode(pre);
+      window.CmsPaste.insertElements([pre], range);
       showToast('✅ コードブロックを挿入しました', '📝');
     }
 
@@ -4209,152 +4287,59 @@
       });
     }
 
-    // 指定されたRangeまたは現在のキャレット位置にHTMLを確実に挿入するヘルパー
-    function insertHtmlAtCapturedRangeOrCanvas(html, savedRange) {
-      if (currentEditorMode === 'visual') {
-        const canvas = document.getElementById('wysiwyg-canvas');
-        canvas.focus();
-        const sel = window.getSelection();
-
-        let targetRange = savedRange;
-        if (!targetRange && sel && sel.rangeCount > 0) {
-          const r = sel.getRangeAt(0);
-          if (canvas.contains(r.commonAncestorContainer)) {
-            targetRange = r;
-          }
-        }
-
-        if (targetRange && canvas.contains(targetRange.commonAncestorContainer)) {
-          targetRange.deleteContents();
-          const temp = document.createElement('div');
-          temp.innerHTML = html;
-          const frag = document.createDocumentFragment();
-          let node, lastNode;
-          while ((node = temp.firstChild)) {
-            lastNode = frag.appendChild(node);
-          }
-          targetRange.insertNode(frag);
-          if (lastNode) {
-            targetRange.setStartAfter(lastNode);
-            targetRange.collapse(true);
-            sel.removeAllRanges();
-            sel.addRange(targetRange);
-          }
-        } else {
-          canvas.insertAdjacentHTML('beforeend', html);
-        }
-        bindImageClickHandlers();
-      } else {
-        const textarea = document.getElementById('source-textarea');
-        const start = textarea.selectionStart || textarea.value.length;
-        const end = textarea.selectionEnd || textarea.value.length;
-        textarea.value = textarea.value.slice(0, start) + '\n' + html + '\n' + textarea.value.slice(end);
-      }
+    function currentArticleSlug() {
+      const params = new URLSearchParams(window.location.search);
+      return activeEditorSlug || params.get('editor') || params.get('slug');
     }
 
-    // クリップボード、ドラッグ＆ドロップ、ファイル選択共通の画像処理＆WebP変換＆挿入パイプライン
-    async function processAndInsertArticleImage(file, sourceAction) {
-      if (!file) return;
+    async function uploadImageData(dataUrl, filename, slug) {
+      const res = await fetch('/api/posts/upload-article-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug: slug, imageBase64: dataUrl, filename: filename })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'サーバー側での画像保存に失敗しました');
+      return data.publicUrl;
+    }
 
-      const slug = activeEditorSlug || new URLSearchParams(window.location.search).get('editor') || new URLSearchParams(window.location.search).get('slug');
-      if (!slug) {
-        showToast('⚠️ 記事が特定できないため画像を保存できません', '⚠️');
-        return;
-      }
-
-      // 1. 現在のキャレット位置を即座にRangeとして保持
-      let savedRange = null;
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0) {
-        const r = sel.getRangeAt(0);
-        const canvas = document.getElementById('wysiwyg-canvas');
-        if (canvas && canvas.contains(r.commonAncestorContainer)) {
-          savedRange = r.cloneRange();
-        }
-      }
-
-      showToast('⏳ 画像をWebPに変換・最適化中...', '🖼️');
-
-      // 2. ブラウザ側で即座にWebP変換
-      let converted = null;
-      try {
-        converted = await convertImageToWebP(file, 1600, 0.85);
-      } catch (err) {
-        console.error('WebP conversion failed:', err);
-      }
-
-      const previewDataUrl = converted ? converted.dataUrl : null;
-      if (!previewDataUrl) {
-        alert('画像の読み込み・変換に失敗しました');
-        return;
-      }
-
-      // 一意な一時IDを発行
-      const tempId = 'img-temp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-
-      // ファイル名からクリーンなalt属性を生成
+    // ブラウザ側でWebPに変換してから保存する
+    async function uploadImageFile(file, slug) {
+      const converted = await convertImageToWebP(file, 1600, 0.85);
+      if (!converted || !converted.dataUrl) throw new Error('画像の読み込み・変換に失敗しました');
       const rawName = file.name || 'image';
-      const cleanAlt = (!/^image(?:\.\w+)?$/i.test(rawName))
-        ? rawName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_\u3000-\u30fe\u4e00-\u9fa5-]/g, ' ').trim()
-        : '';
+      const cleanName = /^image(?:\.\w+)?$/i.test(rawName)
+        ? ''
+        : rawName.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_\u3000-\u30fe\u4e00-\u9fa5-]/g, ' ').trim();
+      const filename = cleanName ? cleanName.toLowerCase().replace(/\s+/g, '-') + '.webp' : 'image.webp';
+      return uploadImageData(converted.dataUrl, filename, slug);
+    }
 
-      // 3. エディタのキャレット位置に即時プレビュー配置 (アップロード中は透過度0.75で表示)
-      const figureHtml = '\n<figure class="article-image-figure" data-temp-id="' + tempId + '" style="opacity: 0.75; transition: opacity 0.3s ease;">\n' +
-        '  <img src="' + previewDataUrl + '" alt="' + escapeHtml(cleanAlt) + '" loading="lazy" />\n' +
-        '  <figcaption contenteditable="true" class="article-image-caption" data-placeholder="キャプションを入力（任意）"></figcaption>\n' +
-        '</figure>\n<p><br></p>\n';
-
-      insertHtmlAtCapturedRangeOrCanvas(figureHtml, savedRange);
-
-      // 4. バックグラウンドでAPIにWebP Base64をアップロード
-      try {
-        const safeFilename = cleanAlt ? (cleanAlt.toLowerCase().replace(/\s+/g, '-') + '.webp') : 'image.webp';
-        const res = await fetch('/api/posts/upload-article-image', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            slug: slug,
-            imageBase64: previewDataUrl,
-            filename: safeFilename
-          })
-        });
-
-        const data = await res.json();
-        if (res.ok && data.success) {
-          // 正式URLに差し替え、透過度を100%に復帰
-          const tempFig = document.querySelector('figure[data-temp-id="' + tempId + '"]');
-          if (tempFig) {
-            const img = tempFig.querySelector('img');
-            if (img) img.src = data.publicUrl;
-            tempFig.style.opacity = '1';
-            tempFig.removeAttribute('data-temp-id');
-          }
-          showToast('✅ WebP画像を保存し配置しました！', '🖼️');
-        } else {
-          throw new Error(data.error || 'サーバー側での画像保存に失敗しました');
-        }
-      } catch (err) {
-        console.error('Image upload failed:', err);
-        const tempFig = document.querySelector('figure[data-temp-id="' + tempId + '"]');
-        if (tempFig) {
-          tempFig.style.outline = '2px dashed #e11d48';
-        }
-        alert('画像の保存に失敗しました: ' + err.message);
+    // クリップボード、ドラッグ＆ドロップ、ファイル選択共通の画像挿入
+    async function processAndInsertArticleImage(file) {
+      if (!file || !currentArticleSlug() || !editorContentReady) {
+        showToast('記事が読み込まれていないため画像を保存できません', '⚠️');
+        return;
       }
+      await window.CmsPaste.insertImages([file]);
     }
 
     // 互換性のためのエイリアス
     async function uploadAndInsertArticleImage(file) {
-      await processAndInsertArticleImage(file, 'direct');
+      await processAndInsertArticleImage(file);
     }
 
     // ドラッグ＆ドロップ画像アップロード
     const dropZone = document.getElementById('editor-drop-zone');
     const dropOverlay = document.getElementById('drop-overlay');
+    // 本文内の画像ドラッグは、アップロード対象にしない
+    let isInternalDrag = false;
+    dropZone.addEventListener('dragstart', function() { isInternalDrag = true; }, true);
+    dropZone.addEventListener('dragend', function() { isInternalDrag = false; }, true);
 
     dropZone.addEventListener('dragover', function(e) {
       e.preventDefault();
-      dropOverlay.classList.add('drag-active');
+      if (!isInternalDrag) dropOverlay.classList.add('drag-active');
     });
     dropZone.addEventListener('dragleave', function(e) {
       e.preventDefault();
@@ -4363,20 +4348,33 @@
     dropZone.addEventListener('drop', async function(e) {
       e.preventDefault();
       dropOverlay.classList.remove('drag-active');
-      const files = e.dataTransfer.files;
-      if (files && files.length > 0) {
-        for (let i = 0; i < files.length; i++) {
-          if (files[i].type && files[i].type.startsWith('image/')) {
-            await processAndInsertArticleImage(files[i], 'drop');
-          }
-        }
+      if (isInternalDrag) {
+        isInternalDrag = false;
+        return;
       }
+      const images = Array.from(e.dataTransfer.files || []).filter(function(f) { return f.type.startsWith('image/'); });
+      if (!images.length || !editorContentReady) return;
+      if (currentEditorMode === 'visual') window.CmsPaste.placeCaretFromPoint(e.clientX, e.clientY);
+      await window.CmsPaste.insertImages(images);
     });
 
-    // 汎用HTML挿入ヘルパー (キャレット位置へ確実に挿入)
+    // 汎用HTML挿入ヘルパー (ビジュアルはブロック境界へ、ソースはカーソル位置へ)
     function insertHtmlAtCursor(html) {
-      insertHtmlAtCapturedRangeOrCanvas(html, null);
+      if (!editorContentReady) return;
+      if (currentEditorMode === 'visual') {
+        window.CmsPaste.insertHtml(html);
+      } else {
+        insertSourceHtml(html);
+      }
     }
+
+    function insertSourceHtml(html) {
+      const textarea = document.getElementById('source-textarea');
+      const start = textarea.selectionStart || textarea.value.length;
+      const end = textarea.selectionEnd || textarea.value.length;
+      textarea.value = textarea.value.slice(0, start) + '\n' + html + '\n' + textarea.value.slice(end);
+    }
+
     // Twitter widgets.js の動的レンダリング
     function renderTwitterWidgets() {
       if (window.twttr && window.twttr.widgets) {
@@ -4492,192 +4490,32 @@
       await insertUrlAsEmbed(url.trim());
     }
 
-    // 特殊コンテナ（コールアウト、引用、図表キャプション、表セル等）の検出
-    function getClosestSpecialContainer(node) {
-      const canvas = document.getElementById('wysiwyg-canvas');
-      while (node && node !== canvas) {
-        if (node.nodeType === 1) {
-          if (node.classList && node.classList.contains('callout-title')) {
-            return { type: 'callout-title', element: node };
-          }
-          if (node.classList && node.classList.contains('callout')) {
-            return { type: 'callout', element: node };
-          }
-          if (node.tagName === 'BLOCKQUOTE') {
-            return { type: 'blockquote', element: node };
-          }
-          if (node.tagName === 'FIGCAPTION') {
-            return { type: 'figcaption', element: node };
-          }
-          if (node.tagName === 'TD' || node.tagName === 'TH') {
-            return { type: 'table-cell', element: node };
-          }
-          if (node.tagName === 'LI') {
-            return { type: 'list-item', element: node };
-          }
-        }
-        node = node.parentNode;
-      }
-      return null;
-    }
-
-    // HTML内のブロック要素を <br> に平坦化し、特殊コンテナの分断・破壊を100%防止する
-    function flattenHtmlToInline(html) {
-      if (!html) return '';
-      try {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        const body = doc.body;
-
-        // font タグ解除
-        const fontTags = Array.from(body.querySelectorAll('font'));
-        fontTags.forEach(function(f) {
-          while (f.firstChild) f.parentNode.insertBefore(f.firstChild, f);
-          f.remove();
-        });
-
-        // スタイル汚染除去
-        const all = Array.from(body.querySelectorAll('*'));
-        all.forEach(function(el) {
-          if (el.style) {
-            el.style.removeProperty('font-size');
-            el.style.removeProperty('font-family');
-            el.style.removeProperty('line-height');
-            if (!el.style.cssText || !el.style.cssText.trim()) el.removeAttribute('style');
-          }
-        });
-
-        // ブロック要素の末尾に <br> を補完してインライン展開
-        const blocks = Array.from(body.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6, li'));
-        blocks.forEach(function(b) {
-          if (b !== body.lastElementChild) {
-            b.appendChild(doc.createElement('br'));
-          }
-          while (b.firstChild) {
-            b.parentNode.insertBefore(b.firstChild, b);
-          }
-          b.remove();
-        });
-
-        return body.innerHTML;
-      } catch(e) {
-        return html.replace(/<[^>]+>/g, ' ');
-      }
-    }
-
-    // クリップボードからの画像貼り付け・URL自動埋め込み＆サニタイズ (Ctrl+V)
+    // 貼り付け・コピーとブロック管理の初期化
     const canvasElem = document.getElementById('wysiwyg-canvas');
+    function afterEditorChange() {
+      bindImageClickHandlers();
+      updateTocList();
+      if (canvasElem.querySelector('blockquote.twitter-tweet')) renderTwitterWidgets();
+    }
     if (canvasElem) {
-      canvasElem.addEventListener('paste', async function(e) {
-        const clipboard = e.clipboardData || window.clipboardData;
-        if (!clipboard) return;
-
-        // 1. クリップボード内の画像ファイル / Blob を検出（画像ペーストを最優先で確実にキャッチ）
-        let imageFile = null;
-        if (clipboard.files && clipboard.files.length > 0) {
-          for (let i = 0; i < clipboard.files.length; i++) {
-            if (clipboard.files[i].type && clipboard.files[i].type.startsWith('image/')) {
-              imageFile = clipboard.files[i];
-              break;
-            }
-          }
-        }
-        if (!imageFile && clipboard.items) {
-          for (let i = 0; i < clipboard.items.length; i++) {
-            const item = clipboard.items[i];
-            if (item.type && item.type.indexOf('image') !== -1) {
-              imageFile = item.getAsFile();
-              if (imageFile) break;
-            }
-          }
-        }
-
-        if (imageFile) {
-          e.preventDefault();
-          await processAndInsertArticleImage(imageFile, 'paste');
-          return;
-        }
-
-        // 2. テキストが単一のURL（X, YouTube, Webサイト）であるかチェックして埋め込み形式へ自動変換
-        const textData = clipboard.getData('text/plain') ? clipboard.getData('text/plain').trim() : '';
-        if (textData && /^https?:\/\/[^\s]+$/i.test(textData)) {
-          e.preventDefault();
-          const embedded = await insertUrlAsEmbed(textData);
-          if (embedded) return;
-        }
-
-        // 3. カーソルの祖先特殊コンテナ（callout, callout-title, blockquote等）を特定
-        const sel = window.getSelection();
-        const anchorNode = (sel && sel.rangeCount > 0) ? sel.anchorNode : null;
-        const containerInfo = getClosestSpecialContainer(anchorNode);
-
-        // --- ケース A: callout-title（ボックスの題名）内の場合 ---
-        if (containerInfo && containerInfo.type === 'callout-title') {
-          e.preventDefault();
-          // 改行を半角スペースに正規化し、親ブロックの分断を100%防止
-          const safeTitleText = (clipboard.getData('text/plain') || '').replace(/[\r\n]+/g, ' ').trim();
-          if (safeTitleText) {
-            document.execCommand('insertText', false, safeTitleText);
-          }
-          return;
-        }
-
-        // --- ケース B: callout（ボックス本文）または blockquote / figcaption / 表セル内の場合 ---
-        if (containerInfo && ['callout', 'blockquote', 'figcaption', 'table-cell'].includes(containerInfo.type)) {
-          e.preventDefault();
-          const htmlData = clipboard.getData('text/html');
-          if (htmlData) {
-            const inlined = flattenHtmlToInline(htmlData);
-            document.execCommand('insertHTML', false, inlined);
-            bindImageClickHandlers();
-            return;
-          }
-
-          const rawPlain = clipboard.getData('text/plain');
-          if (rawPlain) {
-            const rawLines = rawPlain.split(/\r?\n/);
-            const escapedLines = rawLines.map(function(line) {
-              return escapeHtml(line);
-            });
-            document.execCommand('insertHTML', false, escapedLines.join('<br>'));
-            return;
-          }
-          return;
-        }
-
-        // --- ケース C: 通常の本文エリア ---
-        // 4. HTML貼り付け時のサニタイズ（はみ出しスタイル・白抜き・フォントサイズ汚染防止）
-        const htmlData = clipboard.getData('text/html');
-        if (htmlData) {
-          e.preventDefault();
-          const cleaned = cleanArticleHtml(htmlData);
-          document.execCommand('insertHTML', false, cleaned);
-          bindImageClickHandlers();
-          return;
-        }
-
-        // 5. プレーンテキスト貼り付け時の段落（p）分割処理
-        // （ブラウザ既定の <br> 混入による見出し巻き込みバグを完全防止）
-        const rawPlain = clipboard.getData('text/plain');
-        if (rawPlain && rawPlain.includes('\n')) {
-          e.preventDefault();
-          const rawLines = rawPlain.split(/\r?\n/);
-          let html = '';
-          rawLines.forEach(function(line) {
-            const trimmed = line.trim();
-            if (trimmed) {
-              html += '<p>' + escapeHtml(trimmed) + '</p>';
-            } else {
-              html += '<p><br></p>';
-            }
-          });
-          if (html) {
-            document.execCommand('insertHTML', false, html);
-            bindImageClickHandlers();
-            return;
-          }
-        }
+      window.CmsPaste.init({
+        canvas: canvasElem,
+        getMode: function() { return currentEditorMode; },
+        currentSlug: currentArticleSlug,
+        uploadImage: uploadImageFile,
+        embedUrl: insertUrlAsEmbed,
+        insertSource: insertSourceHtml,
+        afterInsert: afterEditorChange,
+        toast: showToast
       });
+      window.CmsBlocks.initBlockToolbar({
+        canvas: canvasElem,
+        container: dropZone,
+        getMode: function() { return editorContentReady ? currentEditorMode : 'loading'; },
+        afterChange: afterEditorChange,
+        toast: showToast
+      });
+
       // 見出し内で Enter キーを押したときの自動段落（p）脱出処理 (IME変換中は除外)
       canvasElem.addEventListener('keydown', function(e) {
         // 画像選択中の Backspace / Delete キーによる即時削除
@@ -4746,6 +4584,20 @@
     }
 
     // Markdown風オートフォーマット (行頭で # , ## , - , 1. , > 入力後にスペースで変換)
+    // 行頭の記号だけを消し、同じ段落内の画像や装飾は残す
+    function removeLeadingText(block, length) {
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+      let remaining = length;
+      let node = walker.nextNode();
+      while (node && remaining > 0) {
+        const count = Math.min(remaining, node.nodeValue.length);
+        node.deleteData(0, count);
+        remaining -= count;
+        node = walker.nextNode();
+      }
+      if (!block.textContent && !block.querySelector('br, img')) block.appendChild(document.createElement('br'));
+    }
+
     function handleMarkdownAutoFormat() {
       if (currentEditorMode !== 'visual') return;
       const sel = window.getSelection();
@@ -4773,8 +4625,7 @@
 
       for (const r of rules) {
         if (fullText.startsWith(r.prefix)) {
-          const remainText = fullText.slice(r.prefix.length);
-          block.textContent = remainText;
+          removeLeadingText(block, r.prefix.length);
           if (r.tag) {
             setBlockFormat(r.tag);
             showToast(r.label + ' に自動変換しました', '✨');
@@ -4878,7 +4729,7 @@
       }
       if (e.key === 'Escape') {
         // 子モーダルが開いている場合は優先して閉じる
-        const subModals = ['table-modal', 'code-modal', 'embed-modal', 'media-manager-modal', 'media-picker-modal'];
+        const subModals = ['table-modal', 'code-modal', 'embed-modal', 'media-manager-modal', 'media-picker-modal', 'edit-modal'];
         let subClosed = false;
         for (const mId of subModals) {
           const el = document.getElementById(mId);
@@ -4907,9 +4758,31 @@
       input.click();
     }
 
-    async function handleSingleThumbnailUpload(e) {
+    function handleSingleThumbnailUpload(e) {
       const file = e.target.files[0];
       if (!file || !activeUploadSlug) return;
+      uploadThumbnail(activeUploadSlug, file);
+    }
+
+    function isSupportedThumbnail(file) {
+      return Boolean(file) && file.size > 0 && THUMBNAIL_MIME_TYPES.includes(file.type);
+    }
+
+    function showUnsupportedThumbnail() {
+      showToast('⚠️ 対応していないファイルです（JPEG / PNG / WebP / GIF / AVIF の画像を指定してください）', '⚠️');
+    }
+
+    // 「サムネ」ボタンと記事カードへのドロップで共通の登録処理
+    function uploadThumbnail(slug, file) {
+      if (!isSupportedThumbnail(file)) {
+        showUnsupportedThumbnail();
+        return;
+      }
+      if (uploadingThumbSlugs.has(slug)) {
+        showToast('⏳ この記事のサムネイルは処理中です', 'ℹ️');
+        return;
+      }
+      uploadingThumbSlugs.add(slug);
 
       showToast('⏳ サムネイル画像を処理中...', 'ℹ️');
       const reader = new FileReader();
@@ -4919,28 +4792,49 @@
           const res = await fetch('/api/posts/upload-thumbnail', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ slug: activeUploadSlug, imageBase64: base64Data })
+            body: JSON.stringify({ slug: slug, imageBase64: base64Data })
           });
           const data = await res.json();
           if (res.ok && data.success) {
             showToast('✅ サムネイル画像を更新・WebP保存しました！', '🖼️');
+            // 画像の差し替えでは記事データが変わらないため、一覧を強制的に再描画する
+            lastRenderedPostsJson = '';
             await loadPosts();
           } else {
             alert('サムネイルの登録に失敗しました: ' + (data.error || '不明なエラー'));
           }
         } catch(err) {
           alert('画像送信エラー: ' + err.message);
+        } finally {
+          uploadingThumbSlugs.delete(slug);
         }
+      };
+      reader.onerror = function() {
+        uploadingThumbSlugs.delete(slug);
+        showToast('❌ 画像ファイルを読み込めませんでした', '⚠️');
       };
       reader.readAsDataURL(file);
     }
 
     function handleThumbnailSelect(e) {
       const file = e.target.files[0];
+      // 同じファイルを選び直しても change が発火するように値を戻す
+      e.target.value = '';
       if (!file) return;
+      setCreateThumbnail(file);
+    }
 
+    // 新規作成画面のサムネイル（ファイル選択とドロップで共通）
+    function setCreateThumbnail(file) {
+      if (!isSupportedThumbnail(file)) {
+        showUnsupportedThumbnail();
+        return;
+      }
+      const seq = ++createThumbReadSeq;
       const reader = new FileReader();
       reader.onload = function(evt) {
+        // 後から指定した画像や、画面の開き直しがあれば古い読み込み結果は捨てる
+        if (seq !== createThumbReadSeq) return;
         currentCreateThumbBase64 = evt.target.result;
         const img = document.getElementById('create-thumb-preview-img');
         const box = document.getElementById('create-thumb-preview-box');
@@ -4948,8 +4842,75 @@
         box.style.display = 'block';
         document.getElementById('upload-label-text').textContent = '✅ ' + file.name + ' (選択済み)';
       };
+      reader.onerror = function() {
+        showToast('❌ 画像ファイルを読み込めませんでした', '⚠️');
+      };
       reader.readAsDataURL(file);
     }
+
+    function isFileDrag(e) {
+      return Boolean(e.dataTransfer) && Array.from(e.dataTransfer.types).includes('Files');
+    }
+
+    // container 内の zoneSelector に一致する要素でファイルのドロップを受け付ける（イベント委譲）
+    function bindFileDropZone(container, zoneSelector, onFile) {
+      if (!container) return;
+
+      function findZone(target) {
+        return target instanceof Element ? target.closest(zoneSelector) : null;
+      }
+
+      function handleOver(e) {
+        const zone = findZone(e.target);
+        if (!zone || !isFileDrag(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        zone.classList.add('drag-active');
+      }
+
+      container.addEventListener('dragenter', handleOver);
+      container.addEventListener('dragover', handleOver);
+      container.addEventListener('dragleave', function(e) {
+        const zone = findZone(e.target);
+        if (zone && !zone.contains(e.relatedTarget)) zone.classList.remove('drag-active');
+      });
+      container.addEventListener('drop', function(e) {
+        const zone = findZone(e.target);
+        if (!zone || !isFileDrag(e)) return;
+        e.preventDefault();
+        zone.classList.remove('drag-active');
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length === 0) return;
+        // 複数指定された場合は、最初の対応画像を使う
+        onFile(zone, files.find(isSupportedThumbnail) || files[0]);
+      });
+    }
+
+    function bindThumbnailDropZones() {
+      bindFileDropZone(document.getElementById('create-modal'), '.file-upload-box', function(zone, file) {
+        setCreateThumbnail(file);
+      });
+
+      bindFileDropZone(document.getElementById('posts-grid'), '.card-thumbnail-box', function(zone, file) {
+        const card = zone.closest('.post-card');
+        const button = card ? card.querySelector('.btn-action-thumb') : null;
+        const slug = button ? button.getAttribute('data-slug') : null;
+        if (slug) uploadThumbnail(slug, file);
+      });
+
+      // 受け付け先の外にファイルを落としても、ブラウザがファイルを開いてページ遷移しないようにする
+      window.addEventListener('dragover', function(e) {
+        if (e.defaultPrevented || !isFileDrag(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'none';
+      });
+      window.addEventListener('drop', function(e) {
+        if (e.defaultPrevented || !isFileDrag(e)) return;
+        e.preventDefault();
+      });
+    }
+
+    bindThumbnailDropZones();
 
     function filterPosts() {
       const query = document.getElementById('search-input').value.toLowerCase().trim();
@@ -4991,6 +4952,7 @@
 
     function openCreateModal() {
       currentCreateThumbBase64 = null;
+      createThumbReadSeq++;
       document.getElementById('create-thumb-preview-box').style.display = 'none';
       document.getElementById('upload-label-text').textContent = '📷 クリックして画像を選択、またはドラッグ＆ドロップ';
       const aiCb = document.getElementById('create-is-ai');
@@ -5293,17 +5255,7 @@
       wrapper.appendChild(table);
 
       // 挿入処理
-      const canvas = document.getElementById('wysiwyg-canvas');
-      canvas.focus();
-      if (savedTableRange) {
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedTableRange);
-        savedTableRange.deleteContents();
-        savedTableRange.insertNode(wrapper);
-      } else {
-        canvas.appendChild(wrapper);
-      }
+      window.CmsPaste.insertElements([wrapper], savedTableRange);
 
       closeTableModal();
       showToast('✅ レスポンシブ表を挿入しました', '📊');
@@ -5420,17 +5372,7 @@
       code.textContent = codeText;
       pre.appendChild(code);
 
-      const canvas = document.getElementById('wysiwyg-canvas');
-      canvas.focus();
-      if (savedCodeRange) {
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedCodeRange);
-        savedCodeRange.deleteContents();
-        savedCodeRange.insertNode(pre);
-      } else {
-        canvas.appendChild(pre);
-      }
+      window.CmsPaste.insertElements([pre], savedCodeRange);
 
       closeCodeModal();
       showToast('✅ コードブロック (' + lang + ') を挿入しました', '📝');
@@ -5918,19 +5860,12 @@
         figure.appendChild(figcaption);
       }
 
-      const canvas = document.getElementById('wysiwyg-canvas');
-      canvas.focus();
-      if (savedPickerRange) {
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedPickerRange);
-        savedPickerRange.deleteContents();
-        savedPickerRange.insertNode(figure);
+      if (currentEditorMode === 'visual') {
+        window.CmsPaste.insertElements([figure], savedPickerRange);
       } else {
-        canvas.appendChild(figure);
+        insertSourceHtml(figure.outerHTML);
       }
 
-      bindImageClickHandlers();
       closeMediaPickerModal();
       showToast('✅ 選択した画像を本文に配置しました！', '🖼️');
     }

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execFile, exec, execSync, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import sharp from 'sharp';
+import { extractProse, replaceProse } from '../src/page-prose.js';
 
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
@@ -25,6 +26,36 @@ const HTML_PATH = path.join(cmsRoot, 'scripts', 'dev-cms.html');
 const THUMBNAIL_DIR = path.join(siteRoot, 'src', 'assets', 'post-thumbnails');
 const ARTICLES_DIR = path.join(siteRoot, 'src', 'articles');
 const PUBLIC_IMAGES_DIR = path.join(siteRoot, 'public', 'images', 'posts');
+// 画面から読み込むスクリプト（この一覧以外は配信しない）
+const CMS_SCRIPTS = new Set(['/cms/content.js', '/cms/paste.js', '/cms/blocks.js']);
+// slug はファイル名やコマンド引数に使うため、形式を固定する
+const SAFE_SLUG = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
+const SLUG_ROUTES = new Set([
+  '/api/posts/article-content',
+  '/api/posts/save-article-content',
+  '/api/posts/upload-article-image',
+  '/api/posts/create',
+  '/api/posts/upload-thumbnail',
+  '/api/posts/update-meta',
+  '/api/posts/toggle-ai',
+  '/api/posts/toggle-draft',
+  '/api/posts/open',
+  '/api/pages/content',
+  '/api/pages/save',
+]);
+
+// このCMS宛てで、CMS自身の画面からの要求だけを通す（他サイトからのAPI呼び出しは拒否）
+function isTrustedRequest(req, port) {
+  const hosts = [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`];
+  // Hostの検査で、外部ドメインを127.0.0.1に向ける攻撃（DNSリバインディング）を防ぐ
+  if (!hosts.includes(req.headers.host)) return false;
+  const { origin } = req.headers;
+  if (origin !== undefined) {
+    return hosts.some((host) => origin === `http://${host}`);
+  }
+  // Originを送らない別サイトからの読み込み（画像タグなど）はAPIに通さない
+  return !(req.headers['sec-fetch-site'] === 'cross-site' && req.url.startsWith('/api/'));
+}
 
 let astroDevChild = null;
 
@@ -632,7 +663,7 @@ async function deleteMediaAsset(relativeUrl) {
   const diskPath = path.resolve(publicImagesRoot, decodedPath.replace(/^\/images\/?/, ''));
 
   // パストラバーサル防止チェック
-  if (!diskPath.startsWith(publicImagesRoot)) {
+  if (!diskPath.startsWith(publicImagesRoot + path.sep)) {
     throw new Error('許可されていないパスへのアクセスです');
   }
 
@@ -724,37 +755,57 @@ function updateAstroPageTitle(raw, newTitle) {
 
 // Request Handler
 const server = http.createServer(async (req, res) => {
+  if (!isTrustedRequest(req, server.address().port)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    return res.end('Forbidden');
+  }
+
   const url = new URL(req.url, `http://${req.headers.host}`);
   const method = req.method;
-
-  // Set CORS headers for desktop GUI / WebView interoperability
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-  if (method === 'OPTIONS') {
-    res.writeHead(204);
-    return res.end();
-  }
 
   const sendJSON = (data, status = 200) => {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
     res.end(JSON.stringify(data));
   };
 
-  const getBody = () => new Promise((resolve, reject) => {
-    let data = '';
-    req.on('data', chunk => data += chunk);
-    req.on('end', () => {
-      try {
-        resolve(data ? JSON.parse(data) : {});
-      } catch (e) {
-        reject(e);
-      }
+  let bodyPromise = null;
+  const getBody = () => {
+    bodyPromise ??= new Promise((resolve, reject) => {
+      // 分割受信の境目で日本語が壊れないよう、結合してから文字列化する
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => {
+        try {
+          const data = Buffer.concat(chunks).toString('utf8');
+          resolve(data ? JSON.parse(data) : {});
+        } catch (e) {
+          reject(e);
+        }
+      });
     });
-  });
+    return bodyPromise;
+  };
 
-  // Health check API for Splash screen
+  if (SLUG_ROUTES.has(url.pathname)) {
+    let slug = url.searchParams.get('slug');
+    if (method === 'POST') slug = (await getBody().catch(() => null))?.slug;
+    if (typeof slug !== 'string' || !SAFE_SLUG.test(slug)) {
+      return sendJSON({ error: 'Missing or invalid slug' }, 400);
+    }
+  }
+
+  if (method === 'GET' && CMS_SCRIPTS.has(url.pathname)) {
+    try {
+      const script = await fs.readFile(path.join(cmsRoot, 'public', url.pathname.slice(1)), 'utf8');
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
+      return res.end(script);
+    } catch {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      return res.end('Script Not Found');
+    }
+  }
+
+  // Health check API
   if (method === 'GET' && url.pathname === '/api/health') {
     const astroRunning = await isAstroDevServerRunning();
     return sendJSON({
@@ -838,7 +889,7 @@ const server = http.createServer(async (req, res) => {
       const fullPath = path.resolve(publicImagesRoot, relativePath);
 
       // パストラバーサル防止チェック: public/images 配下に収まっているか確認
-      if (!fullPath.startsWith(publicImagesRoot)) {
+      if (!fullPath.startsWith(publicImagesRoot + path.sep)) {
         res.writeHead(403, { 'Content-Type': 'text/plain' });
         return res.end('Forbidden');
       }
@@ -955,19 +1006,15 @@ const server = http.createServer(async (req, res) => {
 
       const meta = parseAstroPageMeta(`${slug}.astro`, fileContent);
 
-      let proseContent = '';
-      const proseMatch = fileContent.match(/<div[^>]*class=["'][^"']*prose[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
-      if (proseMatch) {
-        proseContent = proseMatch[1].trim();
-      }
+      const prose = extractProse(fileContent);
 
       return sendJSON({
         success: true,
         slug,
         meta,
         fullContent: fileContent,
-        proseContent,
-        hasProse: Boolean(proseMatch)
+        proseContent: prose ?? '',
+        hasProse: prose !== null
       });
     } catch (err) {
       console.error('Error fetching page content:', err);
@@ -993,10 +1040,10 @@ const server = http.createServer(async (req, res) => {
 
       let finalContent = body.content;
       if (body.mode === 'prose') {
-        finalContent = existing.replace(
-          /(<div[^>]*class=["'][^"']*prose[^"']*["'][^>]*>)[\s\S]*?(<\/div>)/i,
-          `$1\n${body.content}\n$2`
-        );
+        finalContent = replaceProse(existing, body.content);
+        if (finalContent === null) {
+          return sendJSON({ error: '本文の位置を特定できないため保存できません' }, 400);
+        }
       }
 
       if (body.title) {
@@ -1242,6 +1289,17 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 process.on('SIGINT', () => { stopAstroDevServer(); process.exit(); });
 process.on('SIGTERM', () => { stopAstroDevServer(); process.exit(); });
 
+// 外部（LAN）からは接続させず、このPCからの接続のみ受け付ける
+const ipv6Server = http.createServer((req, res) => server.emit('request', req, res));
+ipv6Server.on('error', (err) => {
+  console.warn(`IPv6 (::1) では待ち受けできません: ${err.code}`);
+});
+server.once('listening', () => {
+  const { port } = server.address();
+  ipv6Server.listen(port, '::1');
+  console.log(`\n🚀 stellorbit.net 記事管理CMS running at: http://localhost:${port}\n`);
+});
+
 // Port fallback handler
 function startServer(port) {
   server.removeAllListeners('error');
@@ -1253,9 +1311,7 @@ function startServer(port) {
       console.error('Server error:', err);
     }
   });
-  server.listen(port, () => {
-    console.log(`\n🚀 stellorbit.net 記事管理CMS running at: http://localhost:${port}\n`);
-  });
+  server.listen(port, '127.0.0.1');
 }
 
 startServer(DEFAULT_PORT);

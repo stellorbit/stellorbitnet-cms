@@ -1,12 +1,11 @@
 # CMS-Stellorbit
 <!-- push verification: 2026-11-04 -->
 
-stellorbit.net 向け独立記事管理 CMS（Web UI & Tauri デスクトップアプリ）
+stellorbit.net 向け独立記事管理 CMS（Web UI）
 
 ## 構成
 - **CMSサーバー / API**: Node.js (`scripts/dev-cms.mjs`, ポート `8322`)
 - **Web UI**: `scripts/dev-cms.html`
-- **デスクトップGUI**: Tauri 2 + HTML/JS (`src-tauri`, `cms-gui`)
 - **対象サイト**: `Website-Stellorbit` (`../Website-Stellorbit` または `WEBSITE_ROOT` 環境変数)
 
 ## 起動方法
@@ -18,11 +17,6 @@ pnpm start
 pnpm run cms
 ```
 ブラウザで `http://localhost:8322` を開きます。
-
-### デスクトップGUI モード (Tauri)
-```bash
-pnpm run cms:app
-```
 
 ## テスト
 ```bash

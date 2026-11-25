@@ -4,19 +4,47 @@
  */
 
 import { assignHeadingIds, extractHeadings, formatHeadings, replaceHeadings } from './headings.js';
+import { extractProse, replaceProse } from './page-prose.js';
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-};
+// slug は GitHub 上のファイルパスに使うため、形式を固定する
+const SAFE_SLUG = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
+const SLUG_ROUTES = new Set([
+  '/api/posts/article-content',
+  '/api/posts/save-article-content',
+  '/api/posts/upload-article-image',
+  '/api/posts/upload-thumbnail',
+  '/api/posts/update-meta',
+  '/api/posts/toggle-ai',
+  '/api/posts/toggle-draft',
+]);
+
+// CMS自身の画面以外（別サイト）からの呼び出しを拒否する
+function isCrossSite(request, url) {
+  const origin = request.headers.get('Origin');
+  if (origin !== null) return origin !== url.origin;
+  return request.headers.get('Sec-Fetch-Site') === 'cross-site' && url.pathname.startsWith('/api/');
+}
+
+async function hasInvalidSlug(request, url) {
+  if (!SLUG_ROUTES.has(url.pathname)) return false;
+  let slug = url.searchParams.get('slug');
+  if (request.method === 'POST') {
+    const body = await request.clone().json().catch(() => null);
+    slug = body?.slug;
+  }
+  return !(typeof slug === 'string' && SAFE_SLUG.test(slug));
+}
+
+// 対象フォルダの外を指すパス（.. や \ など）を拒否する
+function isSafeAssetPath(value) {
+  return !/[\\?#%]/.test(value) && value.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
+}
 
 function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      ...CORS_HEADERS,
     },
   });
 }
@@ -538,11 +566,14 @@ function updateAstroPageTitle(raw, newTitle) {
 
 export default {
   async fetch(request, env, ctx) {
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
-    }
-
     const url = new URL(request.url);
+
+    if (isCrossSite(request, url)) {
+      return new Response('Forbidden', { status: 403 });
+    }
+    if (await hasInvalidSlug(request, url)) {
+      return errorResponse('Missing or invalid slug', 400);
+    }
 
     // 1. Health check & Diagnostics API
     if (url.pathname === '/api/health') {
@@ -571,10 +602,13 @@ export default {
     if (url.pathname.startsWith('/api/thumbnails/')) {
       try {
         const filename = decodeURIComponent(url.pathname.replace('/api/thumbnails/', ''));
+        if (filename.includes('/') || !isSafeAssetPath(filename)) {
+          return new Response('Forbidden', { status: 403 });
+        }
         const filePath = `src/assets/post-thumbnails/${filename}`;
         const buffer = await getGitHubBinary(filePath, env);
         if (!buffer) {
-          return new Response('Thumbnail Not Found', { status: 404, headers: CORS_HEADERS });
+          return new Response('Thumbnail Not Found', { status: 404 });
         }
         const ext = filename.split('.').pop().toLowerCase();
         const contentType = ext === 'webp' ? 'image/webp' : ext === 'png' ? 'image/png' : 'image/jpeg';
@@ -583,11 +617,10 @@ export default {
           headers: {
             'Content-Type': contentType,
             'Cache-Control': 'public, max-age=604800, immutable',
-            ...CORS_HEADERS,
           },
         });
       } catch (err) {
-        return new Response('Thumbnail Error: ' + err.message, { status: 500, headers: CORS_HEADERS });
+        return new Response('Thumbnail Error: ' + err.message, { status: 500 });
       }
     }
 
@@ -595,10 +628,13 @@ export default {
     if (url.pathname.startsWith('/images/')) {
       try {
         const relativePath = decodeURIComponent(url.pathname.replace(/^\/images\/?/, ''));
+        if (!isSafeAssetPath(relativePath)) {
+          return new Response('Forbidden', { status: 403 });
+        }
         const filePath = `public/images/${relativePath}`;
         let buffer = await getGitHubBinary(filePath, env);
         if (!buffer) {
-          return new Response('Image Not Found', { status: 404, headers: CORS_HEADERS });
+          return new Response('Image Not Found', { status: 404 });
         }
 
         // 二重Base64保存の自動検出＆復元フォールバック (破損画像の自己修復配信)
@@ -633,11 +669,10 @@ export default {
           headers: {
             'Content-Type': mimeTypes[ext] || 'application/octet-stream',
             'Cache-Control': 'public, max-age=604800, immutable',
-            ...CORS_HEADERS,
           },
         });
       } catch (err) {
-        return new Response('Image Error: ' + err.message, { status: 500, headers: CORS_HEADERS });
+        return new Response('Image Error: ' + err.message, { status: 500 });
       }
     }
 
@@ -710,11 +745,7 @@ export default {
 
           const meta = parseAstroPageMeta(`${cleanSlug}.astro`, fileData.content);
 
-          let proseContent = '';
-          const proseMatch = fileData.content.match(/<div[^>]*class=["'][^"']*prose[^"']*["'][^>]*>([\s\S]*?)<\/div>/i);
-          if (proseMatch) {
-            proseContent = proseMatch[1].trim();
-          }
+          const prose = extractProse(fileData.content);
 
           return jsonResponse({
             success: true,
@@ -722,8 +753,8 @@ export default {
             sha: fileData.sha,
             meta,
             fullContent: fileData.content,
-            proseContent,
-            hasProse: Boolean(proseMatch)
+            proseContent: prose ?? '',
+            hasProse: prose !== null
           });
         } catch (err) {
           console.error('Error in GET /api/pages/content:', err);
@@ -735,7 +766,7 @@ export default {
       if (url.pathname === '/api/pages/save' && request.method === 'POST') {
         try {
           const body = await request.json();
-          if (!body.slug || body.content === undefined) {
+          if (!body.slug || typeof body.content !== 'string') {
             return errorResponse('Missing slug or content', 400);
           }
 
@@ -748,10 +779,10 @@ export default {
 
           let finalContent = body.content;
           if (body.mode === 'prose') {
-            finalContent = fileData.content.replace(
-              /(<div[^>]*class=["'][^"']*prose[^"']*["'][^>]*>)[\s\S]*?(<\/div>)/i,
-              `$1\n${body.content}\n$2`
-            );
+            finalContent = replaceProse(fileData.content, body.content);
+            if (finalContent === null) {
+              return errorResponse('本文の位置を特定できないため保存できません', 400);
+            }
           }
 
           if (body.title) {
@@ -1289,7 +1320,11 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         // Delete Media Asset
         if (url.pathname === '/api/media/delete' && request.method === 'POST') {
           const body = await request.json();
-          if (!body.url) return errorResponse('Missing url', 400);
+          // 削除できるのは public/images 配下の画像だけ
+          if (typeof body.url !== 'string' || !body.url.startsWith('/images/') ||
+              !/\.(webp|png|jpe?g|gif|svg|avif)$/i.test(body.url) || !isSafeAssetPath(body.url.slice(1))) {
+            return errorResponse('Missing or invalid image url', 400);
+          }
 
           const filePath = 'public' + body.url;
           const branch = env.GITHUB_BRANCH || 'main';
