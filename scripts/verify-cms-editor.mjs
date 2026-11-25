@@ -107,7 +107,8 @@ async function verifyArticles(page, base, slugs, saved) {
       const C = window.CmsContent;
       const reason = C.detectSourceOnly(source);
       if (reason) return { reason, mode: window.currentEditorMode, content: window.getLatestContent() };
-      const first = C.cleanHtml(source);
+      const options = { closeFigureGaps: true };
+      const first = C.cleanHtml(source, options);
       const facts = (html) => {
         const t = C.parseArticle(html).content;
         t.querySelectorAll('iframe[data-tweet-id], .twitter-tweet-rendered').forEach((e) => e.remove());
@@ -117,10 +118,10 @@ async function verifyArticles(page, base, slugs, saved) {
         holder.querySelectorAll('script, style').forEach((e) => e.remove());
         return { text: holder.textContent.replace(/\s+/g, ''), images: holder.querySelectorAll('img').length,
           links: holder.querySelectorAll('a[href]').length, headings: Array.from(holder.querySelectorAll('h1,h2,h3,h4')).filter((h) => h.id || h.textContent.trim()).length,
-          figures: holder.querySelectorAll('figure').length,
+          figures: holder.querySelectorAll('figure:not(:has(figure))').length,
           ids: Array.from(holder.querySelectorAll('[id]'), (e) => e.id).sort().join(' ') };
       };
-      return { first, second: C.cleanHtml(first), before: facts(source), after: facts(first),
+      return { first, second: C.cleanHtml(first, options), before: facts(source), after: facts(first),
         live: window.getLatestContent(), mode: window.currentEditorMode };
     }, raw);
     if (result.reason) {

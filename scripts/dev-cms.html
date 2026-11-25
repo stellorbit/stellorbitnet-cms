@@ -804,6 +804,7 @@
 
     /* 画像とキャプション (figure / figcaption / img) - 枠内収容の完全保証 */
     .wysiwyg-canvas figure, .preview-pane figure {
+      position: relative;
       margin: 1.5rem auto !important;
       display: flex !important;
       flex-direction: column !important;
@@ -2884,7 +2885,7 @@
         applyEditorModeView('source');
         showToast(reason + 'のため、ソース編集のみ対応です', '📝');
       } else {
-        textarea.value = cleanArticleHtml(raw);
+        textarea.value = window.CmsContent.cleanHtml(raw, { closeFigureGaps: true });
         applyEditorModeView('visual');
         renderCanvas(textarea.value);
       }
@@ -2994,6 +2995,8 @@
 
       fig.onclick = function(e) {
         if (e.target.closest('figcaption')) {
+          // 説明欄の編集中にBackspaceで画像が消えないよう、選択を解除する
+          clearSelectedImages();
           return;
         }
         e.stopPropagation();
@@ -4526,11 +4529,14 @@
             deleteImageElement(selectedFig);
             return;
           }
-          if (activeImageNode && canvasElem.contains(activeImageNode)) {
+          if (activeImageNode && canvasElem.contains(activeImageNode) && activeImageNode.classList.contains('is-selected')) {
             e.preventDefault();
             deleteImageElement(activeImageNode.closest('figure') || activeImageNode);
             return;
           }
+        } else if (!e.ctrlKey && !e.metaKey && !['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) {
+          // カーソル移動や入力を始めたら画像の選択を解除する
+          clearSelectedImages();
         }
 
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {

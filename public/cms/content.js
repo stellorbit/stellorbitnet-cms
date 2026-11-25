@@ -61,6 +61,13 @@
     return paragraph;
   }
 
+  // カーソルを置くために自動で作る行。何も入力されなければ保存しない
+  function createAutoParagraph(doc) {
+    const paragraph = createParagraph(doc);
+    paragraph.setAttribute('data-cms-auto', '');
+    return paragraph;
+  }
+
   function unwrap(element) {
     while (element.firstChild) element.parentNode.insertBefore(element.firstChild, element);
     element.remove();
@@ -137,6 +144,10 @@
       if (!el.classList.length) el.removeAttribute('class');
     });
     restoreTweets(root);
+    root.querySelectorAll('[data-cms-auto]').forEach(function (el) {
+      if (isVisuallyBlank(el)) el.remove();
+      else el.removeAttribute('data-cms-auto');
+    });
     root.querySelectorAll('[contenteditable]').forEach(function (el) { el.removeAttribute('contenteditable'); });
     root.querySelectorAll('[data-placeholder]').forEach(function (el) { el.removeAttribute('data-placeholder'); });
     const walker = doc.createTreeWalker(root, NodeFilter.SHOW_COMMENT);
@@ -307,7 +318,85 @@
     heading.replaceWith(fragment);
   }
 
+  /* ---------- 図の修復（旧CMSで保存された本文向け） ---------- */
+  function captionsOf(figure) {
+    return Array.from(figure.children).filter(function (el) { return el.tagName === 'FIGCAPTION'; });
+  }
+
+  function isEmptyCaption(caption) {
+    return caption.textContent.trim() === '' && !caption.querySelector('img, iframe');
+  }
+
+  // 説明欄が複数ある図は、文章を保ったまま1つにまとめる
+  function mergeCaptions(figure) {
+    const captions = captionsOf(figure);
+    const filled = captions.filter(function (c) { return !isEmptyCaption(c); });
+    const kept = filled[0] || captions[0];
+    captions.forEach(function (caption) {
+      if (caption === kept) return;
+      if (!isEmptyCaption(caption)) {
+        kept.appendChild(kept.ownerDocument.createElement('br'));
+        while (caption.firstChild) kept.appendChild(caption.firstChild);
+      }
+      caption.remove();
+    });
+    if (kept && isEmptyCaption(kept)) kept.textContent = '';
+  }
+
+  // 画像を持たない外側の図が図を包んでいる場合は、外側を解除する
+  function unwrapOuterFigure(figure) {
+    const inner = Array.from(figure.querySelectorAll('figure'));
+    const ownImage = Array.from(figure.querySelectorAll('img')).some(function (img) { return img.closest('figure') === figure; });
+    const filled = captionsOf(figure).filter(function (c) { return !isEmptyCaption(c); });
+    const onlyWraps = Array.from(figure.childNodes).every(function (node) {
+      return node.nodeName === 'FIGURE' || node.nodeName === 'FIGCAPTION' || isVisuallyBlank(node);
+    });
+    // 複数の図と共通の説明を持つ組み合わせは、意図した構造なので残す
+    if (!inner.length || ownImage || !onlyWraps || (inner.length > 1 && filled.length)) return;
+    filled.forEach(function (caption) {
+      const target = captionsOf(inner[0]).find(isEmptyCaption);
+      if (target) target.replaceWith(caption);
+      else inner[0].appendChild(caption);
+      mergeCaptions(inner[0]);
+    });
+    Array.from(figure.children).forEach(function (child) {
+      if (child.tagName === 'FIGURE') figure.before(child);
+    });
+    figure.remove();
+  }
+
+  function repairFigures(root) {
+    Array.from(root.querySelectorAll('figure')).reverse().forEach(function (figure) {
+      mergeCaptions(figure);
+      unwrapOuterFigure(figure);
+    });
+  }
+
+  function isFigureBlock(node) {
+    if (!node) return false;
+    if (node.tagName === 'FIGURE') return true;
+    return node.tagName === 'P' && node.textContent.trim() === '' && Boolean(node.querySelector('img'));
+  }
+
+  // 見出しと画像の間に残った空行を詰める（読み込み時のみ）
+  function closeFigureGaps(root) {
+    let previous = null;
+    let gap = [];
+    Array.from(root.children).forEach(function (el) {
+      if (el.tagName === 'P' && isVisuallyBlank(el) && !isAnchorTarget(el)) {
+        gap.push(el);
+        return;
+      }
+      if ((isHeading(previous) && isFigureBlock(el)) || (isFigureBlock(previous) && isHeading(el))) {
+        gap.forEach(function (p) { p.remove(); });
+      }
+      previous = el;
+      gap = [];
+    });
+  }
+
   function normalizeBlocks(root) {
+    repairFigures(root);
     unwrapPlainDivs(root);
     wrapLooseInline(root);
     root.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(function (heading) {
@@ -337,10 +426,11 @@
     }
   }
 
-  function serializeFragment(root) {
+  function serializeFragment(root, options) {
     stripEditorArtifacts(root);
     cleanTree(root);
     normalizeBlocks(root);
+    if (options && options.closeFigureGaps) closeFigureGaps(root);
     while (root.lastElementChild && root.lastElementChild.tagName === 'P' && isVisuallyBlank(root.lastElementChild)) {
       root.lastElementChild.remove();
     }
@@ -364,8 +454,8 @@
       .replace(/\uE001/g, '&#125;') + '\n';
   }
 
-  function cleanHtml(html) {
-    return serializeFragment(parseArticle(html).content);
+  function cleanHtml(html, options) {
+    return serializeFragment(parseArticle(html).content, options);
   }
 
   function serializeElement(element) {
@@ -420,6 +510,7 @@
     isHeading,
     isVisuallyBlank,
     createParagraph,
+    createAutoParagraph,
     parseArticle,
     wrapLooseInline,
     liftFromHeading,

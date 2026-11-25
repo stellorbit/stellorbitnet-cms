@@ -1,4 +1,4 @@
-/* global window, document, confirm */
+/* global window, document, confirm, Node */
 /* stellorbit CMS: ブロック単位の管理（移動・複製・削除・コピー・見出し配下の一括操作・取り消し） */
 (function () {
   'use strict';
@@ -399,9 +399,103 @@
     }
   }
 
+  /* ---------- 画像まわりの編集: 標準の処理で説明欄が壊れないようにする ---------- */
+  function elementAt(node) {
+    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    return element && element !== deps.canvas && deps.canvas.contains(element) ? element : null;
+  }
+
+  function topBlockOf(element) {
+    let current = element;
+    while (current.parentElement !== deps.canvas) current = current.parentElement;
+    return current;
+  }
+
+  function placeCaret(element, atEnd) {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(!atEnd);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  // 要素の先頭（backward）または末尾にカーソルがあり、その先に消せる文字や画像がない
+  function atEdge(element, range, backward) {
+    const rest = document.createRange();
+    rest.selectNodeContents(element);
+    if (backward) rest.setEnd(range.startContainer, range.startOffset);
+    else rest.setStart(range.startContainer, range.startOffset);
+    const fragment = rest.cloneContents();
+    fragment.querySelectorAll('.figure-action-toolbar').forEach(function (el) { el.remove(); });
+    return fragment.textContent.replace(/[\r\n\t]/g, '') === '' && !fragment.querySelector('img, br, iframe, video, table');
+  }
+
+  // 説明欄でのEnterは欄を増やさず、図の下の行へ移動する
+  function moveBelow(block) {
+    let next = block.nextElementSibling;
+    if (!next || next.tagName !== 'P' || !content().isVisuallyBlank(next)) {
+      next = content().createAutoParagraph(document);
+      runOp(function () { block.after(next); });
+    }
+    placeCaret(next, false);
+    deps.afterChange();
+  }
+
+  function guardFigureEdit(event) {
+    const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    const element = elementAt(range.startContainer);
+    if (!element) return;
+    const type = event.inputType;
+    const isBreak = type === 'insertParagraph' || type === 'insertLineBreak';
+    const backward = /^delete\w*Backward$/.test(type);
+    const forward = /^delete\w*Forward$/.test(type);
+    const caption = element.closest('figcaption');
+    if (caption && deps.canvas.contains(caption)) {
+      if (type === 'insertParagraph') {
+        event.preventDefault();
+        moveBelow(topBlockOf(caption));
+      } else if (range.collapsed && ((backward && atEdge(caption, range, true)) || (forward && atEdge(caption, range, false)))) {
+        event.preventDefault();
+      }
+      return;
+    }
+    const block = topBlockOf(element);
+    // 使い始めた行は、空でも保存する
+    if (isBreak) block.removeAttribute('data-cms-auto');
+    if (!backward || !range.collapsed || !/^(P|H[1-6])$/.test(block.tagName)) return;
+    const figure = block.previousElementSibling;
+    if (!figure || figure.tagName !== 'FIGURE') return;
+    const blank = content().isVisuallyBlank(block);
+    if (!blank && !atEdge(block, range, true)) return;
+    event.preventDefault();
+    // 本文は説明欄へ結合しない。空行だけは削除する
+    const next = block.nextElementSibling;
+    if (!blank || !next) return;
+    runOp(function () { block.remove(); });
+    const target = figure.querySelector('figcaption');
+    placeCaret(target || next, Boolean(target));
+    deps.afterChange();
+  }
+
+  // 消し切った説明欄に残る<br>を除き、入力欄の案内を表示し直す
+  function tidyCaption(event) {
+    const selection = window.getSelection();
+    if (event.isComposing || !selection.rangeCount) return;
+    const element = elementAt(selection.getRangeAt(0).startContainer);
+    const caption = element && element.closest('figcaption');
+    if (!caption || caption.textContent !== '' || !caption.firstChild || caption.querySelector('img')) return;
+    caption.textContent = '';
+    placeCaret(caption, false);
+  }
+
   function initBlockToolbar(options) {
     deps = options;
     buildToolbar();
+    deps.canvas.addEventListener('beforeinput', guardFigureEdit);
+    deps.canvas.addEventListener('input', tidyCaption);
     deps.canvas.addEventListener('mousemove', function (e) {
       // ボタンを押したままの移動（ドラッグ開始や文字選択）では対象を切り替えない
       if (e.buttons) return;

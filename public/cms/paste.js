@@ -144,7 +144,7 @@
       if (next && next.tagName === 'P' && content().isVisuallyBlank(next)) {
         rest = next;
       } else {
-        rest = content().createParagraph(document);
+        rest = content().createAutoParagraph(document);
         last.after(rest);
       }
     }
